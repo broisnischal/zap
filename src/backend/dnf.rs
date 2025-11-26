@@ -2,6 +2,7 @@ use anyhow::{Context, Result};
 use async_trait::async_trait;
 use std::process::{Command, Stdio};
 
+use super::sudo;
 use super::{InstallResult, Package, PackageExtra, PackageManager};
 
 /// DNF package manager backend for Fedora/RHEL
@@ -248,16 +249,10 @@ impl PackageManager for DnfBackend {
 
         println!("--> Installing packages with dnf...");
 
-        let mut cmd = Command::new("sudo");
-        cmd.arg("dnf")
-            .arg("install")
-            .arg("-y")
-            .args(&pkg_names)
-            .stdin(Stdio::inherit())
-            .stdout(Stdio::inherit())
-            .stderr(Stdio::inherit());
+        let mut args = vec!["dnf", "install", "-y"];
+        args.extend(pkg_names.iter().copied());
 
-        let status = cmd.status().context("Failed to run dnf install")?;
+        let status = sudo::run_sudo(&args).context("Failed to run dnf install")?;
 
         let success = status.success();
         for pkg in packages {

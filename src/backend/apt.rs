@@ -2,6 +2,7 @@ use anyhow::{Context, Result};
 use async_trait::async_trait;
 use std::process::{Command, Stdio};
 
+use super::sudo;
 use super::{InstallResult, Package, PackageExtra, PackageManager};
 
 /// APT package manager backend for Debian/Ubuntu
@@ -201,16 +202,10 @@ impl PackageManager for AptBackend {
 
         println!("--> Installing packages with apt...");
         
-        let mut cmd = Command::new("sudo");
-        cmd.arg("apt")
-            .arg("install")
-            .arg("-y")
-            .args(&pkg_names)
-            .stdin(Stdio::inherit())
-            .stdout(Stdio::inherit())
-            .stderr(Stdio::inherit());
+        let mut args = vec!["apt", "install", "-y"];
+        args.extend(pkg_names.iter().copied());
 
-        let status = cmd.status().context("Failed to run apt install")?;
+        let status = sudo::run_sudo(&args).context("Failed to run apt install")?;
 
         let success = status.success();
         for pkg in packages {
@@ -260,11 +255,7 @@ impl PackageManager for AptBackend {
     async fn check_updates(&self) -> Result<Vec<Package>> {
         // First update package lists
         println!("--> Updating package lists...");
-        let _ = Command::new("sudo")
-            .args(["apt", "update"])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
+        let _ = sudo::run_sudo_output(&["apt", "update"]);
 
         // Get upgradable packages
         let output = Command::new("apt")

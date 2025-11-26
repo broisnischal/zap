@@ -1,9 +1,11 @@
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use serde::Deserialize;
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
+use super::sudo;
 use super::{InstallResult, Package, PackageExtra, PackageManager};
 
 const AUR_RPC_URL: &str = "https://aur.archlinux.org/rpc/v5";
@@ -125,6 +127,511 @@ impl AurBackend {
         Ok(pkg_dir)
     }
 
+    /// Parse PKGBUILD to extract all dependencies
+    fn parse_pkgbuild_dependencies(&self, pkg_dir: &PathBuf) -> Result<Vec<String>> {
+        let pkgbuild = pkg_dir.join("PKGBUILD");
+        if !pkgbuild.exists() {
+            return Ok(vec![]);
+        }
+
+        let content = std::fs::read_to_string(&pkgbuild)
+            .context("Failed to read PKGBUILD")?;
+
+        let mut deps = Vec::new();
+        let mut in_array = false;
+        let mut current_deps = Vec::new();
+
+        for line in content.lines() {
+            let line = line.trim();
+            
+            // Skip comments and empty lines
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+
+            // Check for dependency arrays: depends, makedepends, checkdepends
+            if line.starts_with("depends=") || line.starts_with("makedepends=") || 
+               line.starts_with("checkdepends=") {
+                
+                // Check if it's an array assignment (bash array syntax)
+                if line.contains("(") {
+                    in_array = true;
+                    current_deps.clear();
+                    
+                    // Extract dependencies from the line
+                    if let Some(start) = line.find('(') {
+                        let rest = &line[start+1..];
+                        
+                        // Check if array closes on same line
+                        if let Some(end) = rest.rfind(')') {
+                            let deps_str = &rest[..end];
+                            // Parse quoted strings
+                            let mut current = String::new();
+                            let mut in_quotes = false;
+                            let mut quote_char = '\0';
+                            
+                            for ch in deps_str.chars() {
+                                match ch {
+                                    '\'' | '"' if !in_quotes => {
+                                        in_quotes = true;
+                                        quote_char = ch;
+                                    }
+                                    '\'' | '"' if in_quotes && ch == quote_char => {
+                                        in_quotes = false;
+                                        quote_char = '\0';
+                                        if !current.is_empty() {
+                                            current_deps.push(current.clone());
+                                            current.clear();
+                                        }
+                                    }
+                                    _ if in_quotes => {
+                                        current.push(ch);
+                                    }
+                                    _ if ch.is_whitespace() && !in_quotes => {
+                                        if !current.is_empty() {
+                                            current_deps.push(current.clone());
+                                            current.clear();
+                                        }
+                                    }
+                                    _ if !in_quotes => {
+                                        current.push(ch);
+                                    }
+                                    _ => {}
+                                }
+                            }
+                            
+                            if !current.is_empty() {
+                                current_deps.push(current);
+                            }
+                            
+                            in_array = false;
+                            deps.extend(current_deps.drain(..));
+                        } else {
+                            // Multi-line array, continue reading
+                            let deps_str = rest;
+                            let mut current = String::new();
+                            let mut in_quotes = false;
+                            let mut quote_char = '\0';
+                            
+                            for ch in deps_str.chars() {
+                                match ch {
+                                    '\'' | '"' if !in_quotes => {
+                                        in_quotes = true;
+                                        quote_char = ch;
+                                    }
+                                    '\'' | '"' if in_quotes && ch == quote_char => {
+                                        in_quotes = false;
+                                        quote_char = '\0';
+                                        if !current.is_empty() {
+                                            current_deps.push(current.clone());
+                                            current.clear();
+                                        }
+                                    }
+                                    _ if in_quotes => {
+                                        current.push(ch);
+                                    }
+                                    _ if ch.is_whitespace() && !in_quotes => {
+                                        if !current.is_empty() {
+                                            current_deps.push(current.clone());
+                                            current.clear();
+                                        }
+                                    }
+                                    _ if !in_quotes => {
+                                        current.push(ch);
+                                    }
+                                    _ => {}
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    // Single dependency (not an array)
+                    if let Some(dep) = line.split('=').nth(1) {
+                        let dep = dep.trim().trim_matches('"').trim_matches('\'');
+                        if !dep.is_empty() {
+                            deps.push(dep.to_string());
+                        }
+                    }
+                }
+            } else if in_array {
+                // Continue reading multi-line array
+                let line = line.trim();
+                if line == ")" {
+                    in_array = false;
+                    deps.extend(current_deps.drain(..));
+                } else {
+                    // Parse quoted strings from this line
+                    let mut current = String::new();
+                    let mut in_quotes = false;
+                    let mut quote_char = '\0';
+                    
+                    for ch in line.chars() {
+                        match ch {
+                            '\'' | '"' if !in_quotes => {
+                                in_quotes = true;
+                                quote_char = ch;
+                            }
+                            '\'' | '"' if in_quotes && ch == quote_char => {
+                                in_quotes = false;
+                                quote_char = '\0';
+                                if !current.is_empty() {
+                                    current_deps.push(current.clone());
+                                    current.clear();
+                                }
+                            }
+                            _ if in_quotes => {
+                                current.push(ch);
+                            }
+                            _ if ch.is_whitespace() && !in_quotes => {
+                                if !current.is_empty() {
+                                    current_deps.push(current.clone());
+                                    current.clear();
+                                }
+                            }
+                            _ if !in_quotes && ch != '(' && ch != ')' => {
+                                current.push(ch);
+                            }
+                            _ => {}
+                        }
+                    }
+                    
+                    if !current.is_empty() && in_quotes {
+                        // Unclosed quote, might continue on next line
+                    } else if !current.is_empty() {
+                        current_deps.push(current);
+                    }
+                }
+            }
+        }
+
+        // Clean up dependencies (remove version constraints, etc.)
+        let cleaned_deps: Vec<String> = deps
+            .iter()
+            .map(|dep| {
+                // Remove version constraints like >=, =, etc.
+                // Also handle package names with operators: package>=1.0 -> package
+                dep.split_whitespace()
+                    .next()
+                    .unwrap_or(dep)
+                    .split(|c: char| c == '>' || c == '<' || c == '=')
+                    .next()
+                    .unwrap_or(dep)
+                    .to_string()
+            })
+            .filter(|dep| !dep.is_empty() && dep != "(" && dep != ")")
+            .collect();
+
+        Ok(cleaned_deps)
+    }
+
+    /// Check if a package exists in the main Arch repositories
+    fn is_in_main_repos(&self, package: &str) -> bool {
+        // Remove version constraints if present
+        let pkg_name = package.split_whitespace().next().unwrap_or(package);
+        
+        let output = Command::new("pacman")
+            .args(["-Ss", "^", pkg_name, "$"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .output();
+
+        if let Ok(output) = output {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            stdout.lines().any(|line| {
+                line.starts_with(&format!("extra/{}", pkg_name)) ||
+                line.starts_with(&format!("community/{}", pkg_name)) ||
+                line.starts_with(&format!("core/{}", pkg_name)) ||
+                line.starts_with(&format!("multilib/{}", pkg_name))
+            })
+        } else {
+            false
+        }
+    }
+
+    /// Check if a package exists in AUR
+    async fn is_in_aur(&self, package: &str) -> bool {
+        // Remove version constraints
+        let pkg_name = package.split_whitespace().next().unwrap_or(package);
+        
+        let url = format!("{}/info/{}", AUR_RPC_URL, urlencoded(pkg_name));
+        if let Ok(response) = self.client.get(&url).send().await {
+            if let Ok(aur_response) = response.json::<AurResponse>().await {
+                return !aur_response.results.is_empty();
+            }
+        }
+        false
+    }
+
+    /// Resolve AUR dependencies for packages iteratively (avoids recursion issues)
+    async fn resolve_aur_dependencies(
+        &self,
+        package: &Package,
+    ) -> Result<Vec<Package>> {
+        let mut all_deps = Vec::new();
+        let mut visited = HashSet::new();
+        let mut to_process = vec![package.clone()];
+
+        while let Some(current_pkg) = to_process.pop() {
+            let pkg_name = &current_pkg.name;
+            
+            // Skip if already processed
+            if visited.contains(pkg_name) {
+                continue;
+            }
+
+            visited.insert(pkg_name.clone());
+
+            // Download and parse PKGBUILD to get dependencies
+            let snapshot = match self.download_snapshot(&current_pkg).await {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("Warning: Could not fetch dependencies for {}: {}", pkg_name, e);
+                    continue;
+                }
+            };
+
+            let pkg_dir = match self.extract_snapshot(pkg_name, &snapshot) {
+                Ok(d) => d,
+                Err(e) => {
+                    eprintln!("Warning: Could not extract {}: {}", pkg_name, e);
+                    continue;
+                }
+            };
+
+            let deps = match self.parse_pkgbuild_dependencies(&pkg_dir) {
+                Ok(d) => d,
+                Err(e) => {
+                    eprintln!("Warning: Could not parse dependencies for {}: {}", pkg_name, e);
+                    continue;
+                }
+            };
+
+            // Resolve each dependency
+            for dep in deps {
+                // Skip if already installed
+                if self.is_installed(&dep).unwrap_or(false) {
+                    continue;
+                }
+
+                // Check if it's in main repos (pacman will handle it)
+                if self.is_in_main_repos(&dep) {
+                    continue;
+                }
+
+                // Check if it's in AUR
+                if self.is_in_aur(&dep).await {
+                    // Get package info from AUR
+                    if let Ok(mut aur_packages) = self.info(&[&dep]).await {
+                        if let Some(dep_pkg) = aur_packages.pop() {
+                            // Add to list if not already present
+                            if !all_deps.iter().any(|p: &Package| p.name == dep_pkg.name) {
+                                all_deps.push(dep_pkg.clone());
+                                // Add to processing queue
+                                to_process.push(dep_pkg);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(all_deps)
+    }
+
+    /// Install a single package with dependency resolution
+    async fn install_with_deps(&self, package: &Package) -> Result<()> {
+        // Check if already installed
+        if self.is_installed(&package.name)? {
+            return Ok(());
+        }
+
+        // Resolve dependencies
+        println!("--> Resolving dependencies for {}...", package.name);
+        let deps = match self.resolve_aur_dependencies(package).await {
+            Ok(d) => d,
+            Err(e) => {
+                eprintln!("Warning: Could not fully resolve dependencies: {}", e);
+                vec![] // Continue anyway
+            }
+        };
+
+        // Install dependencies first
+        if !deps.is_empty() {
+            println!("--> Installing {} dependencies...", deps.len());
+            let mut failed_deps = Vec::new();
+            
+            for dep in &deps {
+                if self.is_installed(&dep.name).unwrap_or(false) {
+                    continue;
+                }
+                
+                println!("  --> Installing dependency: {}...", dep.name);
+                match self.install_single_package(dep).await {
+                    Ok(()) => {
+                        println!("  --> {} installed successfully", dep.name);
+                    }
+                    Err(e) => {
+                        eprintln!("  --> Warning: Failed to install {}: {}", dep.name, e);
+                        failed_deps.push((dep.name.clone(), e));
+                        // Continue with other dependencies
+                    }
+                }
+            }
+            
+            // If some dependencies failed, warn but continue
+            if !failed_deps.is_empty() {
+                eprintln!("Warning: {} dependencies failed to install, continuing anyway...", failed_deps.len());
+            }
+        }
+
+        // Install the main package
+        // If it fails, try installing without dependency checks
+        match self.install_single_package(package).await {
+            Ok(()) => Ok(()),
+            Err(e) => {
+                eprintln!("Warning: Installation failed: {}", e);
+                eprintln!("Attempting fallback installation method...");
+                
+                // Fallback: try with makepkg directly, let it handle what it can
+                self.fallback_install(package).await
+            }
+        }
+    }
+
+    /// Fallback installation method
+    async fn fallback_install(&self, package: &Package) -> Result<()> {
+        if self.is_installed(&package.name)? {
+            return Ok(());
+        }
+
+        println!("--> Attempting fallback installation for {}...", package.name);
+        let snapshot = self.download_snapshot(package).await?;
+        let pkg_dir = self.extract_snapshot(&package.name, &snapshot)?;
+
+        // Try building first, then installing manually
+        println!("--> Building package...");
+        let build_status = Command::new("makepkg")
+            .current_dir(&pkg_dir)
+            .arg("-s")
+            .arg("--needed")
+            .arg("--noconfirm")
+            .arg("--skipinteg")
+            .stdin(Stdio::inherit())
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit())
+            .status()
+            .context("Failed to run makepkg")?;
+
+        if !build_status.success() {
+            anyhow::bail!("Failed to build {} even with fallback method", package.name);
+        }
+
+        // Find and install the built package
+        let pkg_file = std::fs::read_dir(&pkg_dir)?
+            .filter_map(|e| e.ok())
+            .find(|e| {
+                e.path().extension().map(|ext| ext == "pkg.tar.zst").unwrap_or(false) ||
+                e.path().extension().map(|ext| ext == "pkg.tar.xz").unwrap_or(false)
+            });
+
+        if let Some(pkg_file) = pkg_file {
+            println!("--> Installing built package...");
+            let pkg_path = pkg_file.path();
+            let pkg_path_str = pkg_path.to_string_lossy();
+            let status = sudo::run_sudo(&["pacman", "-U", "--noconfirm", "--needed", &pkg_path_str])
+                .context("Failed to install package")?;
+
+            if status.success() {
+                println!("--> {} installed successfully (fallback method)", package.name);
+                Ok(())
+            } else {
+                anyhow::bail!("Failed to install {} even with fallback method", package.name);
+            }
+        } else {
+            anyhow::bail!("Could not find built package file for {}", package.name);
+        }
+    }
+
+    /// Install a single package without dependency resolution
+    async fn install_single_package(&self, package: &Package) -> Result<()> {
+        if self.is_installed(&package.name)? {
+            return Ok(());
+        }
+
+        println!("--> Downloading {}...", package.name);
+        let snapshot = match self.download_snapshot(package).await {
+            Ok(s) => s,
+            Err(e) => anyhow::bail!("Failed to download {}: {}", package.name, e),
+        };
+
+        println!("--> Extracting {}...", package.name);
+        let pkg_dir = match self.extract_snapshot(&package.name, &snapshot) {
+            Ok(d) => d,
+            Err(e) => anyhow::bail!("Failed to extract {}: {}", package.name, e),
+        };
+
+        println!("--> Building and installing {}...", package.name);
+        
+        // Use makepkg with dependency handling
+        // First try to install missing dependencies from repos
+        let status = Command::new("makepkg")
+            .current_dir(&pkg_dir)
+            .arg("-si")
+            .arg("--needed")
+            .arg("--noconfirm")
+            .arg("--skipinteg")  // Skip integrity checks for faster builds
+            .stdin(Stdio::inherit())
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit())
+            .status()
+            .context("Failed to run makepkg")?;
+
+        if !status.success() {
+            // If makepkg failed, try building without installing dependencies
+            // (we handle AUR deps ourselves)
+            println!("--> Retrying build without automatic dependency installation...");
+            let status = Command::new("makepkg")
+                .current_dir(&pkg_dir)
+                .arg("-s")
+                .arg("--needed")
+                .arg("--noconfirm")
+                .arg("--skipinteg")
+                .stdin(Stdio::inherit())
+                .stdout(Stdio::inherit())
+                .stderr(Stdio::inherit())
+                .status()
+                .context("Failed to run makepkg")?;
+
+            if !status.success() {
+                anyhow::bail!("makepkg failed for {}", package.name);
+            }
+
+            // Install the built package
+            let pkg_file = std::fs::read_dir(&pkg_dir)?
+                .filter_map(|e| e.ok())
+                .find(|e| {
+                    e.path().extension().map(|ext| ext == "pkg.tar.zst").unwrap_or(false) ||
+                    e.path().extension().map(|ext| ext == "pkg.tar.xz").unwrap_or(false)
+                });
+
+            if let Some(pkg_file) = pkg_file {
+                let pkg_path = pkg_file.path();
+                let pkg_path_str = pkg_path.to_string_lossy();
+                let status = sudo::run_sudo(&["pacman", "-U", "--noconfirm", "--needed", &pkg_path_str])
+                    .context("Failed to install package")?;
+
+                if !status.success() {
+                    anyhow::bail!("Failed to install {}", package.name);
+                }
+            } else {
+                anyhow::bail!("Could not find built package file for {}", package.name);
+            }
+        }
+
+        println!("--> {} installed successfully!", package.name);
+        Ok(())
+    }
+
     fn build_and_install(&self, pkg_dir: &PathBuf, pkg_name: &str) -> Result<()> {
         let pkgbuild = pkg_dir.join("PKGBUILD");
         if !pkgbuild.exists() {
@@ -242,24 +749,8 @@ impl PackageManager for AurBackend {
         let mut results = vec![];
 
         for package in packages {
-            let result = async {
-                if self.is_installed(&package.name)? {
-                    return Ok(());
-                }
-
-                println!("--> Downloading {}...", package.name);
-                let snapshot = self.download_snapshot(package).await?;
-
-                println!("--> Extracting {}...", package.name);
-                let pkg_dir = self.extract_snapshot(&package.name, &snapshot)?;
-
-                println!("--> Building and installing {}...", package.name);
-                self.build_and_install(&pkg_dir, &package.name)?;
-
-                println!("--> {} installed successfully!", package.name);
-                Ok(())
-            }.await;
-
+            let result = self.install_with_deps(package).await;
+            
             results.push(InstallResult {
                 package: package.name.clone(),
                 success: result.is_ok(),

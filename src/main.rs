@@ -2,7 +2,7 @@ mod backend;
 mod ui;
 
 use anyhow::Result;
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use colored::Colorize;
 use crossterm::{
     event::{self, Event},
@@ -14,8 +14,28 @@ use std::io::stdout;
 use std::sync::Arc;
 use std::time::Duration;
 
-use backend::{detect_system, Package, PackageManager, System};
+use backend::{detect_available_package_managers, detect_system, Package, PackageManager, System};
 use ui::*;
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum BackendChoice {
+    Auto,
+    // System package managers
+    Apt,
+    Aur,
+    Brew,
+    Dnf,
+    Pacman,
+    Pkg,
+    Zypper,
+    // Universal package managers
+    Flatpak,
+    Snap,
+    // Language package managers
+    Cargo,
+    Go,
+    Pip,
+}
 
 #[derive(Parser)]
 #[command(name = "zap")]
@@ -29,6 +49,10 @@ struct Cli {
     /// Auto-accept all prompts
     #[arg(short = 'y', long, global = true)]
     yes: bool,
+
+    /// Select specific package manager backend
+    #[arg(short, long, value_enum, default_value = "auto", global = true)]
+    backend: BackendChoice,
 
     /// Package names to install directly
     #[arg(trailing_var_arg = true)]
@@ -73,8 +97,12 @@ enum Commands {
     /// Update installed packages
     Update,
 
-    /// Show detected system info
+    /// Show detected system info and available package managers
     System,
+
+    /// List available package managers on this system
+    #[command(alias = "pm")]
+    Managers,
 }
 
 #[tokio::main]
@@ -83,7 +111,7 @@ async fn main() -> Result<()> {
 
     // Detect the system and create appropriate backend
     let system = detect_system();
-    let pm: Arc<dyn PackageManager> = create_backend(&system)?;
+    let pm: Arc<dyn PackageManager> = create_backend(&system, cli.backend)?;
 
     print_info(&format!(
         "Detected: {} (using {})",
@@ -92,7 +120,11 @@ async fn main() -> Result<()> {
     ));
 
     match cli.command {
-        Some(Commands::Search { query, info, interactive }) => {
+        Some(Commands::Search {
+            query,
+            info,
+            interactive,
+        }) => {
             let packages = search_packages(&pm, &query, info).await?;
 
             if interactive && !packages.is_empty() {
@@ -125,6 +157,10 @@ async fn main() -> Result<()> {
             show_system_info(&system, &pm);
         }
 
+        Some(Commands::Managers) => {
+            show_available_managers();
+        }
+
         None => {
             // If packages provided directly, install them
             if !cli.packages.is_empty() {
@@ -139,7 +175,25 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-fn create_backend(system: &System) -> Result<Arc<dyn PackageManager>> {
+fn create_backend(system: &System, choice: BackendChoice) -> Result<Arc<dyn PackageManager>> {
+    match choice {
+        BackendChoice::Auto => create_auto_backend(system),
+        BackendChoice::Apt => Ok(Arc::new(backend::apt::AptBackend::new()?)),
+        BackendChoice::Aur => Ok(Arc::new(backend::aur::AurBackend::new()?)),
+        BackendChoice::Brew => Ok(Arc::new(backend::brew::BrewBackend::new()?)),
+        BackendChoice::Dnf => Ok(Arc::new(backend::dnf::DnfBackend::new()?)),
+        BackendChoice::Pacman => Ok(Arc::new(backend::pacman::PacmanBackend::new()?)),
+        BackendChoice::Pkg => Ok(Arc::new(backend::pkg::PkgBackend::new()?)),
+        BackendChoice::Zypper => Ok(Arc::new(backend::zypper::ZypperBackend::new()?)),
+        BackendChoice::Flatpak => Ok(Arc::new(backend::flatpak::FlatpakBackend::new()?)),
+        BackendChoice::Snap => Ok(Arc::new(backend::snap::SnapBackend::new()?)),
+        BackendChoice::Cargo => Ok(Arc::new(backend::cargo::CargoBackend::new()?)),
+        BackendChoice::Go => Ok(Arc::new(backend::go::GoBackend::new()?)),
+        BackendChoice::Pip => Ok(Arc::new(backend::pip::PipBackend::new()?)),
+    }
+}
+
+fn create_auto_backend(system: &System) -> Result<Arc<dyn PackageManager>> {
     match system {
         System::Arch => {
             let backend = backend::aur::AurBackend::new()?;
@@ -153,13 +207,31 @@ fn create_backend(system: &System) -> Result<Arc<dyn PackageManager>> {
             let backend = backend::dnf::DnfBackend::new()?;
             Ok(Arc::new(backend))
         }
+        System::OpenSUSE => {
+            let backend = backend::zypper::ZypperBackend::new()?;
+            Ok(Arc::new(backend))
+        }
+        System::FreeBSD => {
+            let backend = backend::pkg::PkgBackend::new()?;
+            Ok(Arc::new(backend))
+        }
         System::MacOS => {
             let backend = backend::brew::BrewBackend::new()?;
             Ok(Arc::new(backend))
         }
+        System::Windows => {
+            // For Windows, try to use a language package manager as fallback
+            if let Ok(backend) = backend::cargo::CargoBackend::new() {
+                return Ok(Arc::new(backend));
+            }
+            anyhow::bail!("No supported package manager found for Windows. Use -b to specify a backend (cargo, pip, go).");
+        }
         System::Unknown(name) => {
             anyhow::bail!(
-                "Unsupported system: {}. Supported: Arch Linux, Debian/Ubuntu, Fedora, macOS",
+                "Unsupported system: {}. Use -b to specify a backend. Supported backends:\n\
+                 System: apt, aur, brew, dnf, pacman, pkg, zypper\n\
+                 Universal: flatpak, snap\n\
+                 Language: cargo, go, pip",
                 name
             );
         }
@@ -176,8 +248,53 @@ fn show_system_info(system: &System, pm: &Arc<dyn PackageManager>) {
     println!();
 
     if let Ok(installed) = pm.list_installed() {
-        println!("Installed packages: {}", installed.len().to_string().green());
+        println!(
+            "Installed packages: {}",
+            installed.len().to_string().green()
+        );
     }
+    println!();
+
+    // Show available package managers
+    show_available_managers();
+}
+
+fn show_available_managers() {
+    let available = detect_available_package_managers();
+
+    println!();
+    println!("{}", "Available Package Managers".cyan().bold());
+    println!("{}", "=".repeat(40).bright_black());
+
+    // System package managers
+    println!("\n{}", "System:".yellow());
+    for pm in ["pacman", "aur", "apt", "dnf", "zypper", "pkg", "brew"] {
+        if available.contains(&pm) {
+            println!("  {} {}", "✓".green(), pm);
+        }
+    }
+
+    // Universal package managers
+    println!("\n{}", "Universal:".yellow());
+    for pm in ["flatpak", "snap"] {
+        if available.contains(&pm) {
+            println!("  {} {}", "✓".green(), pm);
+        }
+    }
+
+    // Language package managers
+    println!("\n{}", "Language:".yellow());
+    for pm in ["pip", "cargo", "go", "npm"] {
+        if available.contains(&pm) {
+            println!("  {} {}", "✓".green(), pm);
+        }
+    }
+
+    println!();
+    println!(
+        "{}",
+        "Use -b <backend> to select a specific package manager".bright_black()
+    );
     println!();
 }
 
@@ -204,10 +321,7 @@ async fn search_packages(
     Ok(packages)
 }
 
-async fn install_packages(
-    pm: &Arc<dyn PackageManager>,
-    package_names: Vec<String>,
-) -> Result<()> {
+async fn install_packages(pm: &Arc<dyn PackageManager>, package_names: Vec<String>) -> Result<()> {
     if package_names.is_empty() {
         print_warning("No packages specified");
         return Ok(());
@@ -238,10 +352,7 @@ async fn install_packages(
     install_selected(pm, packages).await
 }
 
-async fn install_selected(
-    pm: &Arc<dyn PackageManager>,
-    packages: Vec<Package>,
-) -> Result<()> {
+async fn install_selected(pm: &Arc<dyn PackageManager>, packages: Vec<Package>) -> Result<()> {
     println!();
     println!("Packages to install:");
     for pkg in &packages {
@@ -262,12 +373,9 @@ async fn install_selected(
     Ok(())
 }
 
-async fn show_package_info(
-    pm: &Arc<dyn PackageManager>,
-    package: &str,
-) -> Result<()> {
+async fn show_package_info(pm: &Arc<dyn PackageManager>, package: &str) -> Result<()> {
     let results = pm.info(&[package]).await?;
-    
+
     if let Some(pkg) = results.into_iter().next() {
         print_package_details(&pkg);
     } else {
@@ -331,7 +439,7 @@ async fn interactive_mode(pm: &Arc<dyn PackageManager>) -> Result<()> {
     // Handle result
     if let Some(packages) = result? {
         if !packages.is_empty() {
-            install_selected(pm, packages).await?;
+            install_selected(&pm, packages).await?;
         }
     }
 
@@ -349,7 +457,10 @@ async fn update_packages(pm: &Arc<dyn PackageManager>) -> Result<()> {
     }
 
     println!();
-    println!("{} updates available:", updates.len().to_string().cyan().bold());
+    println!(
+        "{} updates available:",
+        updates.len().to_string().cyan().bold()
+    );
     for pkg in &updates {
         println!(
             "  {} {} -> {}",
@@ -365,4 +476,3 @@ async fn update_packages(pm: &Arc<dyn PackageManager>) -> Result<()> {
 
     Ok(())
 }
-
