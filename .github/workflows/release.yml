@@ -81,6 +81,7 @@ jobs:
           echo "OPENSSL_STATIC=1" >> $GITHUB_ENV
 
       - name: Build
+        shell: bash
         run: |
           if [ "${{ matrix.cross }}" = "true" ]; then
             cargo install cross --git https://github.com/cross-rs/cross
