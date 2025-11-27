@@ -42,10 +42,10 @@ impl GoBackend {
     async fn search_pkg_go_dev(&self, query: &str) -> Result<Vec<Package>> {
         // pkg.go.dev doesn't have a public API, so we'll try to get package info directly
         // For now, we'll assume the query is a module path or search for it
-        
+
         // Try to get module info directly
         let url = format!("https://proxy.golang.org/{}/@latest", query);
-        
+
         if let Ok(response) = self.client.get(&url).send().await {
             if response.status().is_success() {
                 if let Ok(text) = response.text().await {
@@ -193,7 +193,11 @@ impl PackageManager for GoBackend {
             results.push(InstallResult {
                 package: pkg.name.clone(),
                 success: status.success(),
-                message: if status.success() { None } else { Some("go install failed".to_string()) },
+                message: if status.success() {
+                    None
+                } else {
+                    Some("go install failed".to_string())
+                },
             });
         }
 
@@ -204,7 +208,7 @@ impl PackageManager for GoBackend {
         // Extract binary name from package path
         // e.g., github.com/user/tool -> tool
         let binary_name = package.rsplit('/').next().unwrap_or(package);
-        
+
         // Check if binary exists in GOBIN or GOPATH/bin
         let binaries = Self::find_installed_binaries();
         Ok(binaries.iter().any(|(name, _)| name == binary_name))
@@ -240,7 +244,11 @@ impl PackageManager for GoBackend {
             results.push(InstallResult {
                 package: pkg.name.clone(),
                 success: status.success(),
-                message: if status.success() { None } else { Some("go install failed".to_string()) },
+                message: if status.success() {
+                    None
+                } else {
+                    Some("go install failed".to_string())
+                },
             });
         }
 
@@ -255,4 +263,3 @@ fn command_exists(cmd: &str) -> bool {
         .map(|o| o.status.success())
         .unwrap_or(false)
 }
-

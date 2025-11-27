@@ -24,6 +24,9 @@ enum BackendChoice {
     Apt,
     Aur,
     Brew,
+    Winget,
+    Scoop,
+    Choco,
     Dnf,
     Pacman,
     Pkg,
@@ -108,6 +111,7 @@ enum Commands {
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
+    backend::bootstrap::set_auto_approve(cli.yes);
 
     // Detect the system and create appropriate backend
     let system = detect_system();
@@ -181,6 +185,9 @@ fn create_backend(system: &System, choice: BackendChoice) -> Result<Arc<dyn Pack
         BackendChoice::Apt => Ok(Arc::new(backend::apt::AptBackend::new()?)),
         BackendChoice::Aur => Ok(Arc::new(backend::aur::AurBackend::new()?)),
         BackendChoice::Brew => Ok(Arc::new(backend::brew::BrewBackend::new()?)),
+        BackendChoice::Winget => Ok(Arc::new(backend::winget::WingetBackend::new()?)),
+        BackendChoice::Scoop => Ok(Arc::new(backend::scoop::ScoopBackend::new()?)),
+        BackendChoice::Choco => Ok(Arc::new(backend::choco::ChocoBackend::new()?)),
         BackendChoice::Dnf => Ok(Arc::new(backend::dnf::DnfBackend::new()?)),
         BackendChoice::Pacman => Ok(Arc::new(backend::pacman::PacmanBackend::new()?)),
         BackendChoice::Pkg => Ok(Arc::new(backend::pkg::PkgBackend::new()?)),
@@ -220,11 +227,28 @@ fn create_auto_backend(system: &System) -> Result<Arc<dyn PackageManager>> {
             Ok(Arc::new(backend))
         }
         System::Windows => {
-            // For Windows, try to use a language package manager as fallback
+            if let Ok(backend) = backend::winget::WingetBackend::new() {
+                return Ok(Arc::new(backend));
+            }
+            if let Ok(backend) = backend::scoop::ScoopBackend::new() {
+                return Ok(Arc::new(backend));
+            }
+            if let Ok(backend) = backend::choco::ChocoBackend::new() {
+                return Ok(Arc::new(backend));
+            }
+            // Fall back to language package managers
             if let Ok(backend) = backend::cargo::CargoBackend::new() {
                 return Ok(Arc::new(backend));
             }
-            anyhow::bail!("No supported package manager found for Windows. Use -b to specify a backend (cargo, pip, go).");
+            if let Ok(backend) = backend::pip::PipBackend::new() {
+                return Ok(Arc::new(backend));
+            }
+            if let Ok(backend) = backend::go::GoBackend::new() {
+                return Ok(Arc::new(backend));
+            }
+            anyhow::bail!(
+                "No supported package manager found for Windows. Use -b to specify a backend (winget, scoop, choco, cargo, pip, go)."
+            );
         }
         System::Unknown(name) => {
             anyhow::bail!(
@@ -268,7 +292,9 @@ fn show_available_managers() {
 
     // System package managers
     println!("\n{}", "System:".yellow());
-    for pm in ["pacman", "aur", "apt", "dnf", "zypper", "pkg", "brew"] {
+    for pm in [
+        "pacman", "aur", "apt", "dnf", "zypper", "pkg", "brew", "winget", "scoop", "choco",
+    ] {
         if available.contains(&pm) {
             println!("  {} {}", "✓".green(), pm);
         }

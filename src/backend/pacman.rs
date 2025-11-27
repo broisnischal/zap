@@ -33,7 +33,11 @@ impl PacmanBackend {
                     packages.push(Package {
                         name: current_name.clone(),
                         version: current_version.clone(),
-                        description: if current_desc.is_empty() { None } else { Some(current_desc.clone()) },
+                        description: if current_desc.is_empty() {
+                            None
+                        } else {
+                            Some(current_desc.clone())
+                        },
                         popularity: 0.0,
                         installed: self.is_installed(&current_name).unwrap_or(false),
                         maintainer: None,
@@ -64,7 +68,11 @@ impl PacmanBackend {
             packages.push(Package {
                 name: current_name.clone(),
                 version: current_version.clone(),
-                description: if current_desc.is_empty() { None } else { Some(current_desc) },
+                description: if current_desc.is_empty() {
+                    None
+                } else {
+                    Some(current_desc)
+                },
                 popularity: 0.0,
                 installed: self.is_installed(&current_name).unwrap_or(false),
                 maintainer: None,
@@ -106,7 +114,8 @@ impl PacmanBackend {
                     }
                     "Depends On" => {
                         if value != "None" {
-                            depends = value.split_whitespace()
+                            depends = value
+                                .split_whitespace()
                                 .map(|s| s.split('>').next().unwrap_or(s))
                                 .map(|s| s.split('<').next().unwrap_or(s))
                                 .map(|s| s.split('=').next().unwrap_or(s))
@@ -126,7 +135,11 @@ impl PacmanBackend {
         Some(Package {
             name,
             version,
-            description: if description.is_empty() { None } else { Some(description) },
+            description: if description.is_empty() {
+                None
+            } else {
+                Some(description)
+            },
             popularity: 0.0,
             installed: false,
             maintainer: None,
@@ -208,7 +221,11 @@ impl PackageManager for PacmanBackend {
             results.push(InstallResult {
                 package: pkg.name.clone(),
                 success,
-                message: if success { None } else { Some("pacman install failed".to_string()) },
+                message: if success {
+                    None
+                } else {
+                    Some("pacman install failed".to_string())
+                },
             });
         }
 
@@ -282,4 +299,3 @@ fn command_exists(cmd: &str) -> bool {
         .map(|o| o.status.success())
         .unwrap_or(false)
 }
-

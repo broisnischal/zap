@@ -32,7 +32,17 @@ impl System {
             System::OpenSUSE => "zypper",
             System::FreeBSD => "pkg",
             System::MacOS => "Homebrew",
-            System::Windows => "winget/scoop/choco",
+            System::Windows => {
+                if command_exists("winget") {
+                    "winget"
+                } else if command_exists("scoop") {
+                    "Scoop"
+                } else if command_exists("choco") {
+                    "Chocolatey"
+                } else {
+                    "winget/scoop/choco"
+                }
+            }
             System::Unknown(_) => "Unknown",
         }
     }
@@ -76,7 +86,9 @@ pub fn detect_system() -> System {
 
     // On Unix-like systems, check uname first for BSD
     if let Ok(output) = Command::new("uname").arg("-s").output() {
-        let os = String::from_utf8_lossy(&output.stdout).trim().to_lowercase();
+        let os = String::from_utf8_lossy(&output.stdout)
+            .trim()
+            .to_lowercase();
         if os.contains("freebsd") {
             return System::FreeBSD;
         }
@@ -166,7 +178,9 @@ pub fn detect_system() -> System {
     if command_exists("pkg") {
         // Could be FreeBSD or Termux
         if let Ok(output) = Command::new("uname").arg("-s").output() {
-            let os = String::from_utf8_lossy(&output.stdout).trim().to_lowercase();
+            let os = String::from_utf8_lossy(&output.stdout)
+                .trim()
+                .to_lowercase();
             if os.contains("freebsd") {
                 return System::FreeBSD;
             }
@@ -216,6 +230,15 @@ pub fn detect_available_package_managers() -> Vec<&'static str> {
     }
     if command_exists("brew") {
         managers.push("brew");
+    }
+    if command_exists("winget") {
+        managers.push("winget");
+    }
+    if command_exists("scoop") {
+        managers.push("scoop");
+    }
+    if command_exists("choco") {
+        managers.push("choco");
     }
 
     // Universal package managers

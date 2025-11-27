@@ -1,17 +1,21 @@
 pub mod apt;
 pub mod aur;
+pub mod bootstrap;
 pub mod brew;
 pub mod cargo;
+pub mod choco;
+mod detect;
 pub mod dnf;
 pub mod flatpak;
 pub mod go;
 pub mod pacman;
 pub mod pip;
 pub mod pkg;
+pub mod scoop;
 pub mod snap;
 pub mod sudo;
+pub mod winget;
 pub mod zypper;
-mod detect;
 
 use anyhow::Result;
 use async_trait::async_trait;
@@ -58,6 +62,10 @@ pub struct PackageExtra {
     pub depends: Vec<String>,
     #[serde(default)]
     pub license: Vec<String>,
+    #[serde(default)]
+    pub keywords: Vec<String>,
+    #[serde(default)]
+    pub categories: Vec<String>,
 }
 
 impl Package {
@@ -140,6 +148,9 @@ pub enum PackageManagerType {
     Apt,
     Aur,
     Brew,
+    Winget,
+    Scoop,
+    Choco,
     Dnf,
     Pacman,
     Pkg,
@@ -159,6 +170,9 @@ impl PackageManagerType {
             Self::Apt => "APT",
             Self::Aur => "AUR",
             Self::Brew => "Homebrew",
+            Self::Winget => "winget",
+            Self::Scoop => "Scoop",
+            Self::Choco => "Chocolatey",
             Self::Dnf => "DNF",
             Self::Pacman => "pacman",
             Self::Pkg => "pkg",
@@ -176,6 +190,9 @@ impl PackageManagerType {
             Self::Apt => "apt",
             Self::Aur => "aur",
             Self::Brew => "brew",
+            Self::Winget => "winget",
+            Self::Scoop => "scoop",
+            Self::Choco => "choco",
             Self::Dnf => "dnf",
             Self::Pacman => "pacman",
             Self::Pkg => "pkg",
@@ -194,6 +211,9 @@ impl PackageManagerType {
             Self::Apt,
             Self::Aur,
             Self::Brew,
+            Self::Winget,
+            Self::Scoop,
+            Self::Choco,
             Self::Dnf,
             Self::Pacman,
             Self::Pkg,

@@ -21,7 +21,11 @@ impl ZypperBackend {
 
         for line in output.lines() {
             // Skip header lines and separators
-            if line.starts_with("S ") || line.starts_with("--") || line.is_empty() || line.starts_with("Loading") {
+            if line.starts_with("S ")
+                || line.starts_with("--")
+                || line.is_empty()
+                || line.starts_with("Loading")
+            {
                 continue;
             }
 
@@ -39,7 +43,11 @@ impl ZypperBackend {
                     packages.push(Package {
                         name,
                         version,
-                        description: if description.is_empty() { None } else { Some(description) },
+                        description: if description.is_empty() {
+                            None
+                        } else {
+                            Some(description)
+                        },
                         popularity: 0.0,
                         installed,
                         maintainer: None,
@@ -123,7 +131,11 @@ impl ZypperBackend {
         Some(Package {
             name,
             version,
-            description: if description.is_empty() { None } else { Some(description.trim().to_string()) },
+            description: if description.is_empty() {
+                None
+            } else {
+                Some(description.trim().to_string())
+            },
             popularity: 0.0,
             installed: false,
             maintainer: None,
@@ -201,7 +213,11 @@ impl PackageManager for ZypperBackend {
             results.push(InstallResult {
                 package: pkg.name.clone(),
                 success,
-                message: if success { None } else { Some("zypper install failed".to_string()) },
+                message: if success {
+                    None
+                } else {
+                    Some("zypper install failed".to_string())
+                },
             });
         }
 
@@ -281,4 +297,3 @@ fn command_exists(cmd: &str) -> bool {
         .map(|o| o.status.success())
         .unwrap_or(false)
 }
-

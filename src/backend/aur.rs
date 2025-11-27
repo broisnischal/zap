@@ -96,12 +96,16 @@ impl AurBackend {
 
     /// Download PKGBUILD snapshot for a package
     pub async fn download_snapshot(&self, package: &Package) -> Result<Vec<u8>> {
-        let url_path = package.extra.aur_url_path.as_ref()
+        let url_path = package
+            .extra
+            .aur_url_path
+            .as_ref()
             .ok_or_else(|| anyhow::anyhow!("Package {} has no AUR URL path", package.name))?;
-        
+
         let url = format!("https://aur.archlinux.org{}", url_path);
-        
-        let bytes = self.client
+
+        let bytes = self
+            .client
             .get(&url)
             .send()
             .await
@@ -115,7 +119,7 @@ impl AurBackend {
 
     fn extract_snapshot(&self, pkg_name: &str, data: &[u8]) -> Result<PathBuf> {
         let pkg_dir = self.build_dir.join(pkg_name);
-        
+
         if pkg_dir.exists() {
             std::fs::remove_dir_all(&pkg_dir)?;
         }
@@ -134,8 +138,7 @@ impl AurBackend {
             return Ok(vec![]);
         }
 
-        let content = std::fs::read_to_string(&pkgbuild)
-            .context("Failed to read PKGBUILD")?;
+        let content = std::fs::read_to_string(&pkgbuild).context("Failed to read PKGBUILD")?;
 
         let mut deps = Vec::new();
         let mut in_array = false;
@@ -143,25 +146,26 @@ impl AurBackend {
 
         for line in content.lines() {
             let line = line.trim();
-            
+
             // Skip comments and empty lines
             if line.is_empty() || line.starts_with('#') {
                 continue;
             }
 
             // Check for dependency arrays: depends, makedepends, checkdepends
-            if line.starts_with("depends=") || line.starts_with("makedepends=") || 
-               line.starts_with("checkdepends=") {
-                
+            if line.starts_with("depends=")
+                || line.starts_with("makedepends=")
+                || line.starts_with("checkdepends=")
+            {
                 // Check if it's an array assignment (bash array syntax)
                 if line.contains("(") {
                     in_array = true;
                     current_deps.clear();
-                    
+
                     // Extract dependencies from the line
                     if let Some(start) = line.find('(') {
-                        let rest = &line[start+1..];
-                        
+                        let rest = &line[start + 1..];
+
                         // Check if array closes on same line
                         if let Some(end) = rest.rfind(')') {
                             let deps_str = &rest[..end];
@@ -169,7 +173,7 @@ impl AurBackend {
                             let mut current = String::new();
                             let mut in_quotes = false;
                             let mut quote_char = '\0';
-                            
+
                             for ch in deps_str.chars() {
                                 match ch {
                                     '\'' | '"' if !in_quotes => {
@@ -199,11 +203,11 @@ impl AurBackend {
                                     _ => {}
                                 }
                             }
-                            
+
                             if !current.is_empty() {
                                 current_deps.push(current);
                             }
-                            
+
                             in_array = false;
                             deps.extend(current_deps.drain(..));
                         } else {
@@ -212,7 +216,7 @@ impl AurBackend {
                             let mut current = String::new();
                             let mut in_quotes = false;
                             let mut quote_char = '\0';
-                            
+
                             for ch in deps_str.chars() {
                                 match ch {
                                     '\'' | '"' if !in_quotes => {
@@ -264,7 +268,7 @@ impl AurBackend {
                     let mut current = String::new();
                     let mut in_quotes = false;
                     let mut quote_char = '\0';
-                    
+
                     for ch in line.chars() {
                         match ch {
                             '\'' | '"' if !in_quotes => {
@@ -294,7 +298,7 @@ impl AurBackend {
                             _ => {}
                         }
                     }
-                    
+
                     if !current.is_empty() && in_quotes {
                         // Unclosed quote, might continue on next line
                     } else if !current.is_empty() {
@@ -328,7 +332,7 @@ impl AurBackend {
     fn is_in_main_repos(&self, package: &str) -> bool {
         // Remove version constraints if present
         let pkg_name = package.split_whitespace().next().unwrap_or(package);
-        
+
         let output = Command::new("pacman")
             .args(["-Ss", "^", pkg_name, "$"])
             .stdout(Stdio::null())
@@ -338,10 +342,10 @@ impl AurBackend {
         if let Ok(output) = output {
             let stdout = String::from_utf8_lossy(&output.stdout);
             stdout.lines().any(|line| {
-                line.starts_with(&format!("extra/{}", pkg_name)) ||
-                line.starts_with(&format!("community/{}", pkg_name)) ||
-                line.starts_with(&format!("core/{}", pkg_name)) ||
-                line.starts_with(&format!("multilib/{}", pkg_name))
+                line.starts_with(&format!("extra/{}", pkg_name))
+                    || line.starts_with(&format!("community/{}", pkg_name))
+                    || line.starts_with(&format!("core/{}", pkg_name))
+                    || line.starts_with(&format!("multilib/{}", pkg_name))
             })
         } else {
             false
@@ -352,7 +356,7 @@ impl AurBackend {
     async fn is_in_aur(&self, package: &str) -> bool {
         // Remove version constraints
         let pkg_name = package.split_whitespace().next().unwrap_or(package);
-        
+
         let url = format!("{}/info/{}", AUR_RPC_URL, urlencoded(pkg_name));
         if let Ok(response) = self.client.get(&url).send().await {
             if let Ok(aur_response) = response.json::<AurResponse>().await {
@@ -363,17 +367,14 @@ impl AurBackend {
     }
 
     /// Resolve AUR dependencies for packages iteratively (avoids recursion issues)
-    async fn resolve_aur_dependencies(
-        &self,
-        package: &Package,
-    ) -> Result<Vec<Package>> {
+    async fn resolve_aur_dependencies(&self, package: &Package) -> Result<Vec<Package>> {
         let mut all_deps = Vec::new();
         let mut visited = HashSet::new();
         let mut to_process = vec![package.clone()];
 
         while let Some(current_pkg) = to_process.pop() {
             let pkg_name = &current_pkg.name;
-            
+
             // Skip if already processed
             if visited.contains(pkg_name) {
                 continue;
@@ -385,7 +386,10 @@ impl AurBackend {
             let snapshot = match self.download_snapshot(&current_pkg).await {
                 Ok(s) => s,
                 Err(e) => {
-                    eprintln!("Warning: Could not fetch dependencies for {}: {}", pkg_name, e);
+                    eprintln!(
+                        "Warning: Could not fetch dependencies for {}: {}",
+                        pkg_name, e
+                    );
                     continue;
                 }
             };
@@ -401,7 +405,10 @@ impl AurBackend {
             let deps = match self.parse_pkgbuild_dependencies(&pkg_dir) {
                 Ok(d) => d,
                 Err(e) => {
-                    eprintln!("Warning: Could not parse dependencies for {}: {}", pkg_name, e);
+                    eprintln!(
+                        "Warning: Could not parse dependencies for {}: {}",
+                        pkg_name, e
+                    );
                     continue;
                 }
             };
@@ -459,12 +466,12 @@ impl AurBackend {
         if !deps.is_empty() {
             println!("--> Installing {} dependencies...", deps.len());
             let mut failed_deps = Vec::new();
-            
+
             for dep in &deps {
                 if self.is_installed(&dep.name).unwrap_or(false) {
                     continue;
                 }
-                
+
                 println!("  --> Installing dependency: {}...", dep.name);
                 match self.install_single_package(dep).await {
                     Ok(()) => {
@@ -477,10 +484,13 @@ impl AurBackend {
                     }
                 }
             }
-            
+
             // If some dependencies failed, warn but continue
             if !failed_deps.is_empty() {
-                eprintln!("Warning: {} dependencies failed to install, continuing anyway...", failed_deps.len());
+                eprintln!(
+                    "Warning: {} dependencies failed to install, continuing anyway...",
+                    failed_deps.len()
+                );
             }
         }
 
@@ -491,7 +501,7 @@ impl AurBackend {
             Err(e) => {
                 eprintln!("Warning: Installation failed: {}", e);
                 eprintln!("Attempting fallback installation method...");
-                
+
                 // Fallback: try with makepkg directly, let it handle what it can
                 self.fallback_install(package).await
             }
@@ -504,7 +514,10 @@ impl AurBackend {
             return Ok(());
         }
 
-        println!("--> Attempting fallback installation for {}...", package.name);
+        println!(
+            "--> Attempting fallback installation for {}...",
+            package.name
+        );
         let snapshot = self.download_snapshot(package).await?;
         let pkg_dir = self.extract_snapshot(&package.name, &snapshot)?;
 
@@ -530,22 +543,35 @@ impl AurBackend {
         let pkg_file = std::fs::read_dir(&pkg_dir)?
             .filter_map(|e| e.ok())
             .find(|e| {
-                e.path().extension().map(|ext| ext == "pkg.tar.zst").unwrap_or(false) ||
-                e.path().extension().map(|ext| ext == "pkg.tar.xz").unwrap_or(false)
+                e.path()
+                    .extension()
+                    .map(|ext| ext == "pkg.tar.zst")
+                    .unwrap_or(false)
+                    || e.path()
+                        .extension()
+                        .map(|ext| ext == "pkg.tar.xz")
+                        .unwrap_or(false)
             });
 
         if let Some(pkg_file) = pkg_file {
             println!("--> Installing built package...");
             let pkg_path = pkg_file.path();
             let pkg_path_str = pkg_path.to_string_lossy();
-            let status = sudo::run_sudo(&["pacman", "-U", "--noconfirm", "--needed", &pkg_path_str])
-                .context("Failed to install package")?;
+            let status =
+                sudo::run_sudo(&["pacman", "-U", "--noconfirm", "--needed", &pkg_path_str])
+                    .context("Failed to install package")?;
 
             if status.success() {
-                println!("--> {} installed successfully (fallback method)", package.name);
+                println!(
+                    "--> {} installed successfully (fallback method)",
+                    package.name
+                );
                 Ok(())
             } else {
-                anyhow::bail!("Failed to install {} even with fallback method", package.name);
+                anyhow::bail!(
+                    "Failed to install {} even with fallback method",
+                    package.name
+                );
             }
         } else {
             anyhow::bail!("Could not find built package file for {}", package.name);
@@ -571,7 +597,7 @@ impl AurBackend {
         };
 
         println!("--> Building and installing {}...", package.name);
-        
+
         // Use makepkg with dependency handling
         // First try to install missing dependencies from repos
         let status = Command::new("makepkg")
@@ -579,7 +605,7 @@ impl AurBackend {
             .arg("-si")
             .arg("--needed")
             .arg("--noconfirm")
-            .arg("--skipinteg")  // Skip integrity checks for faster builds
+            .arg("--skipinteg") // Skip integrity checks for faster builds
             .stdin(Stdio::inherit())
             .stdout(Stdio::inherit())
             .stderr(Stdio::inherit())
@@ -610,15 +636,22 @@ impl AurBackend {
             let pkg_file = std::fs::read_dir(&pkg_dir)?
                 .filter_map(|e| e.ok())
                 .find(|e| {
-                    e.path().extension().map(|ext| ext == "pkg.tar.zst").unwrap_or(false) ||
-                    e.path().extension().map(|ext| ext == "pkg.tar.xz").unwrap_or(false)
+                    e.path()
+                        .extension()
+                        .map(|ext| ext == "pkg.tar.zst")
+                        .unwrap_or(false)
+                        || e.path()
+                            .extension()
+                            .map(|ext| ext == "pkg.tar.xz")
+                            .unwrap_or(false)
                 });
 
             if let Some(pkg_file) = pkg_file {
                 let pkg_path = pkg_file.path();
                 let pkg_path_str = pkg_path.to_string_lossy();
-                let status = sudo::run_sudo(&["pacman", "-U", "--noconfirm", "--needed", &pkg_path_str])
-                    .context("Failed to install package")?;
+                let status =
+                    sudo::run_sudo(&["pacman", "-U", "--noconfirm", "--needed", &pkg_path_str])
+                        .context("Failed to install package")?;
 
                 if !status.success() {
                     anyhow::bail!("Failed to install {}", package.name);
@@ -674,8 +707,9 @@ impl PackageManager for AurBackend {
 
         // Try name-only search first
         let url = format!("{}/search/{}?by=name", AUR_RPC_URL, urlencoded(query));
-        
-        let response: AurResponse = self.client
+
+        let response: AurResponse = self
+            .client
             .get(&url)
             .send()
             .await
@@ -687,8 +721,9 @@ impl PackageManager for AurBackend {
         if response.error.is_some() || response.results.is_empty() {
             // Fall back to name-desc search
             let url = format!("{}/search/{}?by=name-desc", AUR_RPC_URL, urlencoded(query));
-            
-            let response: AurResponse = self.client
+
+            let response: AurResponse = self
+                .client
                 .get(&url)
                 .send()
                 .await
@@ -704,14 +739,23 @@ impl PackageManager for AurBackend {
                 anyhow::bail!("AUR API error: {}", error);
             }
 
-            let mut results: Vec<Package> = response.results.into_iter().map(Package::from).collect();
-            results.sort_by(|a, b| b.popularity.partial_cmp(&a.popularity).unwrap_or(std::cmp::Ordering::Equal));
+            let mut results: Vec<Package> =
+                response.results.into_iter().map(Package::from).collect();
+            results.sort_by(|a, b| {
+                b.popularity
+                    .partial_cmp(&a.popularity)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
             results.truncate(MAX_RESULTS);
             return Ok(results);
         }
 
         let mut results: Vec<Package> = response.results.into_iter().map(Package::from).collect();
-        results.sort_by(|a, b| b.popularity.partial_cmp(&a.popularity).unwrap_or(std::cmp::Ordering::Equal));
+        results.sort_by(|a, b| {
+            b.popularity
+                .partial_cmp(&a.popularity)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         results.truncate(MAX_RESULTS);
         Ok(results)
     }
@@ -729,7 +773,8 @@ impl PackageManager for AurBackend {
 
         let url = format!("{}/info?{}", AUR_RPC_URL, args);
 
-        let response: AurResponse = self.client
+        let response: AurResponse = self
+            .client
             .get(&url)
             .send()
             .await
@@ -750,7 +795,7 @@ impl PackageManager for AurBackend {
 
         for package in packages {
             let result = self.install_with_deps(package).await;
-            
+
             results.push(InstallResult {
                 package: package.name.clone(),
                 success: result.is_ok(),
@@ -773,7 +818,7 @@ impl PackageManager for AurBackend {
 
     fn list_installed(&self) -> Result<Vec<(String, String)>> {
         let output = Command::new("pacman")
-            .args(["-Qm"])  // Foreign packages (AUR)
+            .args(["-Qm"]) // Foreign packages (AUR)
             .output()?;
 
         if !output.status.success() {
@@ -831,4 +876,3 @@ fn urlencoded(s: &str) -> String {
         })
         .collect()
 }
-

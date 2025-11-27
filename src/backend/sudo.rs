@@ -169,7 +169,9 @@ pub fn run_sudo_output(args: &[&str]) -> Result<std::process::Output> {
         let _ = writeln!(stdin, "{}", password);
     }
 
-    let output = child.wait_with_output().context("Failed to wait for sudo command")?;
+    let output = child
+        .wait_with_output()
+        .context("Failed to wait for sudo command")?;
     Ok(output)
 }
 
@@ -220,4 +222,3 @@ pub fn run_sudo_in_dir(args: &[&str], dir: &std::path::Path) -> Result<ExitStatu
     let status = child.wait().context("Failed to wait for sudo command")?;
     Ok(status)
 }
-

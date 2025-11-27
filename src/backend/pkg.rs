@@ -106,7 +106,11 @@ impl PkgBackend {
         Some(Package {
             name,
             version,
-            description: if description.is_empty() { None } else { Some(description) },
+            description: if description.is_empty() {
+                None
+            } else {
+                Some(description)
+            },
             popularity: 0.0,
             installed: false,
             maintainer,
@@ -169,7 +173,10 @@ impl PackageManager for PkgBackend {
                             maintainer: lines.get(4).map(|s| s.to_string()),
                             url: lines.get(3).map(|s| s.to_string()),
                             extra: PackageExtra {
-                                license: lines.get(5).map(|s| vec![s.to_string()]).unwrap_or_default(),
+                                license: lines
+                                    .get(5)
+                                    .map(|s| vec![s.to_string()])
+                                    .unwrap_or_default(),
                                 ..Default::default()
                             },
                         };
@@ -217,7 +224,11 @@ impl PackageManager for PkgBackend {
             results.push(InstallResult {
                 package: pkg.name.clone(),
                 success,
-                message: if success { None } else { Some("pkg install failed".to_string()) },
+                message: if success {
+                    None
+                } else {
+                    Some("pkg install failed".to_string())
+                },
             });
         }
 
@@ -235,9 +246,7 @@ impl PackageManager for PkgBackend {
     }
 
     fn list_installed(&self) -> Result<Vec<(String, String)>> {
-        let output = Command::new("pkg")
-            .args(["query", "%n %v"])
-            .output()?;
+        let output = Command::new("pkg").args(["query", "%n %v"]).output()?;
 
         if !output.status.success() {
             return Ok(vec![]);
@@ -295,4 +304,3 @@ fn command_exists(cmd: &str) -> bool {
         .map(|o| o.status.success())
         .unwrap_or(false)
 }
-

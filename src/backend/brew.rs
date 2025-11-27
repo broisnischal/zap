@@ -65,29 +65,36 @@ impl BrewBackend {
             urlencoded(query)
         );
 
-        let response: BrewSearchResult = self.client
+        let response: BrewSearchResult = self
+            .client
             .get(&url)
             .send()
             .await
             .context("Failed to search Homebrew")?
             .json()
             .await
-            .unwrap_or(BrewSearchResult { formulae: vec![], casks: vec![] });
+            .unwrap_or(BrewSearchResult {
+                formulae: vec![],
+                casks: vec![],
+            });
 
         Ok((response.formulae, response.casks))
     }
 
     async fn get_formula_info(&self, name: &str) -> Result<Option<Package>> {
         let url = format!("https://formulae.brew.sh/api/formula/{}.json", name);
-        
+
         let response = self.client.get(&url).send().await;
-        
+
         if let Ok(resp) = response {
             if resp.status().is_success() {
                 if let Ok(formula) = resp.json::<BrewFormula>().await {
                     return Ok(Some(Package {
                         name: formula.name,
-                        version: formula.versions.stable.unwrap_or_else(|| "latest".to_string()),
+                        version: formula
+                            .versions
+                            .stable
+                            .unwrap_or_else(|| "latest".to_string()),
                         description: formula.desc,
                         popularity: 0.0,
                         installed: false,
@@ -110,9 +117,9 @@ impl BrewBackend {
 
     async fn get_cask_info(&self, name: &str) -> Result<Option<Package>> {
         let url = format!("https://formulae.brew.sh/api/cask/{}.json", name);
-        
+
         let response = self.client.get(&url).send().await;
-        
+
         if let Ok(resp) = response {
             if resp.status().is_success() {
                 if let Ok(cask) = resp.json::<BrewCask>().await {
@@ -207,19 +214,20 @@ impl PackageManager for BrewBackend {
 
         for package in packages {
             let is_cask = package.extra.brew_cask.unwrap_or(false);
-            
-            println!("--> Installing {}{}...", 
-                package.name, 
+
+            println!(
+                "--> Installing {}{}...",
+                package.name,
                 if is_cask { " (cask)" } else { "" }
             );
 
             let mut cmd = Command::new("brew");
             cmd.arg("install");
-            
+
             if is_cask {
                 cmd.arg("--cask");
             }
-            
+
             cmd.arg(&package.name)
                 .stdin(Stdio::inherit())
                 .stdout(Stdio::inherit())
@@ -230,10 +238,10 @@ impl PackageManager for BrewBackend {
             results.push(InstallResult {
                 package: package.name.clone(),
                 success: status.success(),
-                message: if status.success() { 
-                    None 
-                } else { 
-                    Some("brew install failed".to_string()) 
+                message: if status.success() {
+                    None
+                } else {
+                    Some("brew install failed".to_string())
                 },
             });
         }
@@ -301,7 +309,7 @@ impl PackageManager for BrewBackend {
 
     async fn check_updates(&self) -> Result<Vec<Package>> {
         println!("--> Checking for updates...");
-        
+
         let output = Command::new("brew")
             .args(["outdated", "--json"])
             .output()
@@ -312,16 +320,16 @@ impl PackageManager for BrewBackend {
         }
 
         let stdout = String::from_utf8_lossy(&output.stdout);
-        
+
         // Parse outdated packages
         #[derive(Deserialize)]
         struct OutdatedFormula {
             name: String,
             current_version: String,
         }
-        
+
         let outdated: Vec<OutdatedFormula> = serde_json::from_str(&stdout).unwrap_or_default();
-        
+
         let mut updates = vec![];
         for pkg in outdated {
             if let Ok(Some(mut info)) = self.get_formula_info(&pkg.name).await {
@@ -351,4 +359,3 @@ fn urlencoded(s: &str) -> String {
         })
         .collect()
 }
-

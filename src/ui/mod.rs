@@ -1,5 +1,4 @@
-use std::io::{self, stdout};
-use std::time::Duration;
+use colored::Colorize;
 use crossterm::{
     event::{self, Event, KeyCode, KeyModifiers},
     execute,
@@ -12,9 +11,10 @@ use ratatui::{
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph},
     Frame, Terminal,
 };
-use colored::Colorize;
+use std::io::{self, stdout};
+use std::time::Duration;
 
-use crate::backend::{Package, InstallResult};
+use crate::backend::{InstallResult, Package};
 
 /// Safely truncate a string to a maximum number of characters (not bytes)
 fn truncate_str(s: &str, max_chars: usize) -> String {
@@ -43,7 +43,7 @@ impl FuzzyFinder {
         if !filtered.is_empty() {
             list_state.select(Some(0));
         }
-        
+
         Self {
             packages,
             filtered,
@@ -56,16 +56,18 @@ impl FuzzyFinder {
 
     fn filter(&mut self) {
         let query_lower = self.query.to_lowercase();
-        
+
         if query_lower.is_empty() {
             self.filtered = (0..self.packages.len()).collect();
         } else {
-            self.filtered = self.packages
+            self.filtered = self
+                .packages
                 .iter()
                 .enumerate()
                 .filter(|(_, pkg)| {
                     let name_match = pkg.name.to_lowercase().contains(&query_lower);
-                    let desc_match = pkg.description
+                    let desc_match = pkg
+                        .description
                         .as_ref()
                         .map(|d| d.to_lowercase().contains(&query_lower))
                         .unwrap_or(false);
@@ -79,7 +81,11 @@ impl FuzzyFinder {
         if self.cursor >= self.filtered.len() {
             self.cursor = self.filtered.len().saturating_sub(1);
         }
-        self.list_state.select(if self.filtered.is_empty() { None } else { Some(self.cursor) });
+        self.list_state.select(if self.filtered.is_empty() {
+            None
+        } else {
+            Some(self.cursor)
+        });
     }
 
     fn toggle_selection(&mut self) {
@@ -117,7 +123,7 @@ impl FuzzyFinder {
         enable_raw_mode()?;
         let mut stdout = stdout();
         execute!(stdout, EnterAlternateScreen)?;
-        
+
         let backend = CrosstermBackend::new(stdout);
         let mut terminal = Terminal::new(backend)?;
 
@@ -129,7 +135,10 @@ impl FuzzyFinder {
         result
     }
 
-    fn run_loop(&mut self, terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> io::Result<Vec<Package>> {
+    fn run_loop(
+        &mut self,
+        terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    ) -> io::Result<Vec<Package>> {
         loop {
             terminal.draw(|f| self.render(f))?;
 
@@ -194,9 +203,9 @@ impl FuzzyFinder {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(3),  // Search input
-                Constraint::Min(5),     // List
-                Constraint::Length(3),  // Help
+                Constraint::Length(3), // Search input
+                Constraint::Min(5),    // List
+                Constraint::Length(3), // Help
             ])
             .split(f.area());
 
@@ -205,7 +214,7 @@ impl FuzzyFinder {
             .borders(Borders::ALL)
             .border_style(Style::default().fg(Color::Magenta))
             .title(" Search (type to filter) ");
-        
+
         let search_text = format!(" > {}_", self.query);
         let search = Paragraph::new(search_text)
             .style(Style::default().fg(Color::White))
@@ -213,16 +222,21 @@ impl FuzzyFinder {
         f.render_widget(search, chunks[0]);
 
         // Package list
-        let items: Vec<ListItem> = self.filtered
+        let items: Vec<ListItem> = self
+            .filtered
             .iter()
             .enumerate()
             .map(|(display_idx, &pkg_idx)| {
                 let pkg = &self.packages[pkg_idx];
                 let is_selected = self.selected.contains(&pkg_idx);
-                
+
                 let checkbox = if is_selected { "[x]" } else { "[ ]" };
-                let ood = if pkg.extra.out_of_date.is_some() { " !" } else { "" };
-                
+                let ood = if pkg.extra.out_of_date.is_some() {
+                    " !"
+                } else {
+                    ""
+                };
+
                 // Format popularity/votes info
                 let pop_info = if let Some(votes) = pkg.extra.aur_votes {
                     format!("(+{})", votes)
@@ -231,18 +245,13 @@ impl FuzzyFinder {
                 } else {
                     String::new()
                 };
-                
+
                 let desc = pkg.description.as_deref().unwrap_or("No description");
                 let desc_short = truncate_str(desc, 50);
 
                 let line = format!(
                     "{} {} {} {}{}  {}",
-                    checkbox,
-                    pkg.name,
-                    pkg.version,
-                    pop_info,
-                    ood,
-                    desc_short
+                    checkbox, pkg.name, pkg.version, pop_info, ood, desc_short
                 );
 
                 let style = if display_idx == self.cursor {
@@ -262,17 +271,20 @@ impl FuzzyFinder {
             })
             .collect();
 
-        let list_title = format!(" Packages ({}/{}) - {} selected ", 
-            self.filtered.len(), 
+        let list_title = format!(
+            " Packages ({}/{}) - {} selected ",
+            self.filtered.len(),
             self.packages.len(),
             self.selected.len()
         );
-        
+
         let list = List::new(items)
-            .block(Block::default()
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::Cyan))
-                .title(list_title))
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(Color::Cyan))
+                    .title(list_title),
+            )
             .highlight_style(Style::default().bg(Color::Rgb(60, 60, 80)));
 
         f.render_stateful_widget(list, chunks[1], &mut self.list_state);
@@ -281,9 +293,11 @@ impl FuzzyFinder {
         let help_text = " [Space/Tab] Select  [Enter] Confirm  [Esc] Cancel  [Ctrl+A] Select All  [Up/Down] Navigate ";
         let help = Paragraph::new(help_text)
             .style(Style::default().fg(Color::DarkGray))
-            .block(Block::default()
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::DarkGray)));
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(Color::DarkGray)),
+            );
         f.render_widget(help, chunks[2]);
     }
 }
@@ -317,7 +331,11 @@ impl LiveSearcher {
         self.results = results;
         self.cursor = 0;
         self.selected.clear();
-        self.list_state.select(if self.results.is_empty() { None } else { Some(0) });
+        self.list_state.select(if self.results.is_empty() {
+            None
+        } else {
+            Some(0)
+        });
         self.loading = false;
     }
 
@@ -432,28 +450,31 @@ impl LiveSearcher {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(3),  // Search input
-                Constraint::Min(5),     // List
-                Constraint::Length(3),  // Help
+                Constraint::Length(3), // Search input
+                Constraint::Min(5),    // List
+                Constraint::Length(3), // Help
             ])
             .split(f.area());
 
         // Search input with loading indicator
         let loading_indicator = if self.loading { " ..." } else { "" };
         let search_text = format!(" > {}{}_", self.query, loading_indicator);
-        
+
         let title = format!(" zap ⚡ {} (min 2 chars) ", self.pm_name);
         let search = Paragraph::new(search_text)
             .style(Style::default().fg(Color::White))
-            .block(Block::default()
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::Magenta))
-                .title(title));
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(Color::Magenta))
+                    .title(title),
+            );
         f.render_widget(search, chunks[0]);
 
         // Package list
         let items: Vec<ListItem> = if self.is_query_too_short() {
-            vec![ListItem::new("  Type at least 2 characters to search...").style(Style::default().fg(Color::DarkGray))]
+            vec![ListItem::new("  Type at least 2 characters to search...")
+                .style(Style::default().fg(Color::DarkGray))]
         } else if self.results.is_empty() && !self.query.is_empty() && !self.loading {
             vec![ListItem::new("  No packages found").style(Style::default().fg(Color::DarkGray))]
         } else {
@@ -462,11 +483,15 @@ impl LiveSearcher {
                 .enumerate()
                 .map(|(idx, pkg)| {
                     let is_selected = self.selected.contains(&idx);
-                    
+
                     let checkbox = if is_selected { "[x]" } else { "[ ]" };
-                    let ood = if pkg.extra.out_of_date.is_some() { " [!]" } else { "" };
+                    let ood = if pkg.extra.out_of_date.is_some() {
+                        " [!]"
+                    } else {
+                        ""
+                    };
                     let installed = if pkg.installed { " [installed]" } else { "" };
-                    
+
                     // Format popularity/votes info
                     let pop_info = if let Some(votes) = pkg.extra.aur_votes {
                         format!("(+{})", votes)
@@ -475,19 +500,13 @@ impl LiveSearcher {
                     } else {
                         String::new()
                     };
-                    
+
                     let desc = pkg.description.as_deref().unwrap_or("No description");
                     let desc_short = truncate_str(desc, 40);
 
                     let line = format!(
                         "{} {} {} {}{}{}  {}",
-                        checkbox,
-                        pkg.name,
-                        pkg.version,
-                        pop_info,
-                        ood,
-                        installed,
-                        desc_short
+                        checkbox, pkg.name, pkg.version, pop_info, ood, installed, desc_short
                     );
 
                     let style = if idx == self.cursor {
@@ -496,7 +515,9 @@ impl LiveSearcher {
                             .fg(Color::White)
                             .add_modifier(Modifier::BOLD)
                     } else if is_selected {
-                        Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)
+                        Style::default()
+                            .fg(Color::Green)
+                            .add_modifier(Modifier::BOLD)
                     } else if pkg.installed {
                         Style::default().fg(Color::Blue)
                     } else if pkg.extra.out_of_date.is_some() {
@@ -510,16 +531,18 @@ impl LiveSearcher {
                 .collect()
         };
 
-        let list_title = format!(" Results: {} | Selected: {} ", 
+        let list_title = format!(
+            " Results: {} | Selected: {} ",
             self.results.len(),
             self.selected.len()
         );
-        
-        let list = List::new(items)
-            .block(Block::default()
+
+        let list = List::new(items).block(
+            Block::default()
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(Color::Cyan))
-                .title(list_title));
+                .title(list_title),
+        );
 
         f.render_stateful_widget(list, chunks[1], &mut self.list_state);
 
@@ -528,9 +551,11 @@ impl LiveSearcher {
         let help = Paragraph::new(help_text)
             .style(Style::default().fg(Color::DarkGray))
             .alignment(Alignment::Center)
-            .block(Block::default()
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::DarkGray)));
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(Color::DarkGray)),
+            );
         f.render_widget(help, chunks[2]);
     }
 }
@@ -545,71 +570,84 @@ pub fn print_package_details(pkg: &Package) {
     println!();
     println!("Package: {}", pkg.name.cyan().bold());
     println!("Version: {}", pkg.version.green());
-    
+
     if let Some(desc) = &pkg.description {
         println!("Description: {}", desc);
     }
-    
+
     if let Some(url) = &pkg.url {
         println!("URL: {}", url.blue());
     }
-    
+
     if let Some(maintainer) = &pkg.maintainer {
         println!("Maintainer: {}", maintainer);
     }
-    
+
     if let Some(votes) = pkg.extra.aur_votes {
         println!("Votes: {}", votes.to_string().yellow());
     }
-    
+
     if pkg.popularity > 0.0 {
         println!("Popularity: {:.2}", pkg.popularity);
     }
-    
+
     if !pkg.extra.depends.is_empty() {
-        println!("Dependencies: {}", pkg.extra.depends.join(", ").bright_black());
+        println!(
+            "Dependencies: {}",
+            pkg.extra.depends.join(", ").bright_black()
+        );
     }
-    
+
     if pkg.extra.out_of_date.is_some() {
-        println!("{}", "WARNING: This package is flagged as out of date!".red().bold());
+        println!(
+            "{}",
+            "WARNING: This package is flagged as out of date!"
+                .red()
+                .bold()
+        );
     }
-    
+
     if pkg.installed {
         println!("Status: {}", "Installed".green().bold());
     }
-    
+
     if !pkg.extra.license.is_empty() {
         println!("License: {}", pkg.extra.license.join(", "));
     }
-    
+
     println!();
 }
 
 pub fn print_search_results(packages: &[Package], pm_name: &str) {
     println!();
-    println!("{} {} packages found ({})", "-->".green(), packages.len().to_string().cyan().bold(), pm_name.bright_black());
+    println!(
+        "{} {} packages found ({})",
+        "-->".green(),
+        packages.len().to_string().cyan().bold(),
+        pm_name.bright_black()
+    );
     println!();
-    
+
     for (i, pkg) in packages.iter().enumerate() {
         let ood_marker = if pkg.extra.out_of_date.is_some() {
             format!(" {}", "[OOD]".red())
         } else {
             String::new()
         };
-        
+
         let installed_marker = if pkg.installed {
             format!(" {}", "[installed]".blue())
         } else {
             String::new()
         };
-        
+
         // Format popularity/votes info
         let pop_info = if let Some(votes) = pkg.extra.aur_votes {
             format!("(+{})", votes).yellow().to_string()
         } else {
             String::new()
         };
-        
+
         println!(
             "{:>3}. {} {} {}{}{}",
             (i + 1).to_string().bright_black(),
@@ -619,7 +657,7 @@ pub fn print_search_results(packages: &[Package], pm_name: &str) {
             ood_marker,
             installed_marker
         );
-        
+
         if let Some(desc) = &pkg.description {
             let desc_lines: Vec<&str> = desc.lines().collect();
             if let Some(first_line) = desc_lines.first() {
@@ -636,21 +674,30 @@ pub fn print_install_summary(results: &[InstallResult]) {
     println!("{}", "=".repeat(60).bright_black());
     println!("Installation Summary");
     println!("{}", "=".repeat(60).bright_black());
-    
+
     let mut success = 0;
     let mut failed = 0;
-    
+
     for result in results {
         if result.success {
-            println!("  {} {} installed successfully", "[OK]".green(), result.package.cyan());
+            println!(
+                "  {} {} installed successfully",
+                "[OK]".green(),
+                result.package.cyan()
+            );
             success += 1;
         } else {
             let msg = result.message.as_deref().unwrap_or("Unknown error");
-            println!("  {} {} failed: {}", "[ERR]".red(), result.package.cyan(), msg);
+            println!(
+                "  {} {} failed: {}",
+                "[ERR]".red(),
+                result.package.cyan(),
+                msg
+            );
             failed += 1;
         }
     }
-    
+
     println!("{}", "=".repeat(60).bright_black());
     println!(
         "  {} {} succeeded, {} failed",

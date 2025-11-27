@@ -71,6 +71,7 @@ cargo install --path . --force
 | SUSE Linux | zypper | `-b zypper` | ✅ Full support |
 | FreeBSD | pkg | `-b pkg` | ✅ Full support |
 | macOS | Homebrew | `-b brew` | ✅ Full support |
+| Windows 10/11 | winget / Scoop / Chocolatey | `-b winget`, `-b scoop`, `-b choco` | ✅ Full support |
 
 ### Universal Package Managers
 
@@ -95,6 +96,7 @@ cargo install --path . --force
 - **🎨 Beautiful UI** - Colorful, interactive terminal interface
 - **🔄 Multi-Backend** - Switch between package managers with `-b` flag
 - **🌍 Cross-Platform** - Works on Linux, macOS, FreeBSD, and more
+- **🧰 Self-Bootstrapping** - Installs missing package managers (winget/scoop/choco) and runtimes (Python for pip) on demand
 
 ## Usage
 
@@ -194,10 +196,12 @@ zap managers
 ### Available Backends
 
 ```
-System:     apt, aur, brew, dnf, pacman, pkg, zypper
+System:     apt, aur, brew, dnf, pacman, pkg, zypper, winget, scoop, choco
 Universal:  flatpak, snap
 Language:   cargo, go, pip
 ```
+
+`zap` will automatically prompt to install missing Windows package managers (winget, Scoop, Chocolatey) or Python for the `pip` backend. Use `-y/--yes` to auto-approve those prompts in non-interactive environments.
 
 ## How It Works
 
@@ -325,9 +329,11 @@ src/
 ├── backend/
 │   ├── mod.rs           # PackageManager trait
 │   ├── detect.rs        # OS detection
+│   ├── bootstrap.rs     # Package-manager/runtime bootstrap helpers
 │   ├── apt.rs           # Debian/Ubuntu backend
 │   ├── aur.rs           # Arch Linux AUR backend
 │   ├── brew.rs          # macOS Homebrew backend
+│   ├── choco.rs         # Windows Chocolatey backend
 │   ├── cargo.rs         # Rust Cargo backend
 │   ├── dnf.rs           # Fedora/RHEL backend
 │   ├── flatpak.rs       # Flatpak backend
@@ -335,7 +341,9 @@ src/
 │   ├── pacman.rs        # Arch Linux pacman backend
 │   ├── pip.rs           # Python pip backend
 │   ├── pkg.rs           # FreeBSD pkg backend
+│   ├── scoop.rs         # Windows Scoop backend
 │   ├── snap.rs          # Snap backend
+│   ├── winget.rs        # Windows winget backend
 │   └── zypper.rs        # openSUSE zypper backend
 └── ui/
     └── mod.rs           # TUI components

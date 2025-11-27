@@ -23,7 +23,7 @@ struct CrateResponse {
     krate: CrateInfo,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 struct CrateInfo {
     name: String,
     #[serde(default)]
@@ -80,9 +80,14 @@ impl PackageManager for CargoBackend {
             return Ok(vec![]);
         }
 
-        let url = format!("{}/crates?q={}&per_page=30", CRATES_IO_API, urlencoded(query));
+        let url = format!(
+            "{}/crates?q={}&per_page=30",
+            CRATES_IO_API,
+            urlencoded(query)
+        );
 
-        let response: CratesSearchResponse = self.client
+        let response: CratesSearchResponse = self
+            .client
             .get(&url)
             .send()
             .await
@@ -91,23 +96,30 @@ impl PackageManager for CargoBackend {
             .await
             .context("Failed to parse crates.io response")?;
 
-        let mut packages: Vec<Package> = response.crates.into_iter().map(|c| {
-            let downloads = c.downloads.unwrap_or(0);
-            // Normalize downloads to a popularity score (0-100)
-            let popularity = (downloads as f64).log10() * 10.0;
-            let version = Self::get_version(&c);
+        let mut packages: Vec<Package> = response
+            .crates
+            .into_iter()
+            .map(|c| {
+                let downloads = c.downloads.unwrap_or(0);
+                // Normalize downloads to a popularity score (0-100)
+                let popularity = (downloads as f64).log10() * 10.0;
+                let version = Self::get_version(&c);
+                let mut extra = PackageExtra::default();
+                extra.keywords = c.keywords.clone();
+                extra.categories = c.categories.clone();
 
-            Package {
-                name: c.name,
-                version,
-                description: c.description,
-                popularity: popularity.min(100.0).max(0.0),
-                installed: false,
-                maintainer: None,
-                url: c.homepage.or(c.repository),
-                extra: PackageExtra::default(),
-            }
-        }).collect();
+                Package {
+                    name: c.name,
+                    version,
+                    description: c.description,
+                    popularity: popularity.min(100.0).max(0.0),
+                    installed: false,
+                    maintainer: None,
+                    url: c.homepage.or(c.repository),
+                    extra,
+                }
+            })
+            .collect();
 
         // Check which are installed
         for pkg in &mut packages {
@@ -115,7 +127,11 @@ impl PackageManager for CargoBackend {
         }
 
         // Sort by popularity
-        packages.sort_by(|a, b| b.popularity.partial_cmp(&a.popularity).unwrap_or(std::cmp::Ordering::Equal));
+        packages.sort_by(|a, b| {
+            b.popularity
+                .partial_cmp(&a.popularity)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
 
         Ok(packages)
     }
@@ -134,6 +150,10 @@ impl PackageManager for CargoBackend {
                         let popularity = (downloads as f64).log10() * 10.0;
                         let version = Self::get_version(&c);
 
+                        let mut extra = PackageExtra::default();
+                        extra.keywords = c.keywords.clone();
+                        extra.categories = c.categories.clone();
+
                         let mut pkg = Package {
                             name: c.name,
                             version,
@@ -142,7 +162,7 @@ impl PackageManager for CargoBackend {
                             installed: false,
                             maintainer: None,
                             url: c.homepage.or(c.repository),
-                            extra: PackageExtra::default(),
+                            extra,
                         };
                         pkg.installed = self.is_installed(&pkg.name)?;
                         results.push(pkg);
@@ -171,7 +191,11 @@ impl PackageManager for CargoBackend {
             results.push(InstallResult {
                 package: pkg.name.clone(),
                 success: status.success(),
-                message: if status.success() { None } else { Some("cargo install failed".to_string()) },
+                message: if status.success() {
+                    None
+                } else {
+                    Some("cargo install failed".to_string())
+                },
             });
         }
 
@@ -179,9 +203,7 @@ impl PackageManager for CargoBackend {
     }
 
     fn is_installed(&self, package: &str) -> Result<bool> {
-        let output = Command::new("cargo")
-            .args(["install", "--list"])
-            .output()?;
+        let output = Command::new("cargo").args(["install", "--list"]).output()?;
 
         if !output.status.success() {
             return Ok(false);
@@ -190,14 +212,15 @@ impl PackageManager for CargoBackend {
         let stdout = String::from_utf8_lossy(&output.stdout);
         // Format: "crate_name v1.0.0:"
         Ok(stdout.lines().any(|line| {
-            line.split_whitespace().next().map(|n| n == package).unwrap_or(false)
+            line.split_whitespace()
+                .next()
+                .map(|n| n == package)
+                .unwrap_or(false)
         }))
     }
 
     fn list_installed(&self) -> Result<Vec<(String, String)>> {
-        let output = Command::new("cargo")
-            .args(["install", "--list"])
-            .output()?;
+        let output = Command::new("cargo").args(["install", "--list"]).output()?;
 
         if !output.status.success() {
             return Ok(vec![]);
@@ -212,7 +235,10 @@ impl PackageManager for CargoBackend {
                 let parts: Vec<_> = line.split_whitespace().collect();
                 if parts.len() >= 2 {
                     let name = parts[0].to_string();
-                    let version = parts[1].trim_start_matches('v').trim_end_matches(':').to_string();
+                    let version = parts[1]
+                        .trim_start_matches('v')
+                        .trim_end_matches(':')
+                        .to_string();
                     packages.push((name, version));
                 }
             }
@@ -245,7 +271,7 @@ impl PackageManager for CargoBackend {
             // Update all installed crates
             println!("--> Checking for cargo updates...");
             let updates = self.check_updates().await?;
-            
+
             for pkg in updates {
                 println!("--> Updating {}...", pkg.name);
                 let status = Command::new("cargo")
@@ -259,7 +285,11 @@ impl PackageManager for CargoBackend {
                 results.push(InstallResult {
                     package: pkg.name,
                     success: status.success(),
-                    message: if status.success() { None } else { Some("cargo update failed".to_string()) },
+                    message: if status.success() {
+                        None
+                    } else {
+                        Some("cargo update failed".to_string())
+                    },
                 });
             }
         } else {
@@ -276,7 +306,11 @@ impl PackageManager for CargoBackend {
                 results.push(InstallResult {
                     package: pkg.name.clone(),
                     success: status.success(),
-                    message: if status.success() { None } else { Some("cargo update failed".to_string()) },
+                    message: if status.success() {
+                        None
+                    } else {
+                        Some("cargo update failed".to_string())
+                    },
                 });
             }
         }
@@ -302,4 +336,3 @@ fn urlencoded(s: &str) -> String {
         })
         .collect()
 }
-

@@ -36,7 +36,11 @@ impl DnfBackend {
                     packages.push(Package {
                         name,
                         version,
-                        description: if current_summary.is_empty() { None } else { Some(current_summary.clone()) },
+                        description: if current_summary.is_empty() {
+                            None
+                        } else {
+                            Some(current_summary.clone())
+                        },
                         popularity: 0.0,
                         installed: false,
                         maintainer: None,
@@ -66,7 +70,11 @@ impl DnfBackend {
             packages.push(Package {
                 name,
                 version,
-                description: if current_summary.is_empty() { None } else { Some(current_summary) },
+                description: if current_summary.is_empty() {
+                    None
+                } else {
+                    Some(current_summary)
+                },
                 popularity: 0.0,
                 installed: false,
                 maintainer: None,
@@ -98,7 +106,7 @@ impl DnfBackend {
             .context("Failed to run dnf info")?;
 
         let stdout = String::from_utf8_lossy(&output.stdout);
-        
+
         for line in stdout.lines() {
             if line.starts_with("Version") {
                 if let Some((_, version)) = line.split_once(':') {
@@ -120,7 +128,9 @@ impl DnfBackend {
 
         for line in output.lines() {
             if in_description {
-                if line.starts_with("             :") || (line.starts_with(' ') && !line.contains(':')) {
+                if line.starts_with("             :")
+                    || (line.starts_with(' ') && !line.contains(':'))
+                {
                     description.push(' ');
                     description.push_str(line.trim().trim_start_matches(':').trim());
                     continue;
@@ -147,7 +157,7 @@ impl DnfBackend {
                     let u = v.trim();
                     if !u.is_empty() && u != "None" {
                         url = Some(format!(":{}", u)); // Re-add the : that was split
-                        // Actually fix the URL parsing
+                                                       // Actually fix the URL parsing
                         if let Some((_, full_url)) = line.split_once(": ") {
                             url = Some(full_url.trim().to_string());
                         }
@@ -167,7 +177,11 @@ impl DnfBackend {
         Some(Package {
             name,
             version,
-            description: if description.is_empty() { None } else { Some(description) },
+            description: if description.is_empty() {
+                None
+            } else {
+                Some(description)
+            },
             popularity: 0.0,
             installed: false,
             maintainer: None,
@@ -259,7 +273,11 @@ impl PackageManager for DnfBackend {
             results.push(InstallResult {
                 package: pkg.name.clone(),
                 success,
-                message: if success { None } else { Some("dnf install failed".to_string()) },
+                message: if success {
+                    None
+                } else {
+                    Some("dnf install failed".to_string())
+                },
             });
         }
 
@@ -313,7 +331,10 @@ impl PackageManager for DnfBackend {
 
         for line in stdout.lines() {
             // Skip empty lines and headers
-            if line.is_empty() || line.starts_with("Last metadata") || line.contains("packages can be upgraded") {
+            if line.is_empty()
+                || line.starts_with("Last metadata")
+                || line.contains("packages can be upgraded")
+            {
                 continue;
             }
 
@@ -339,4 +360,3 @@ fn command_exists(cmd: &str) -> bool {
         .map(|o| o.status.success())
         .unwrap_or(false)
 }
-

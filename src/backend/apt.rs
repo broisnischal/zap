@@ -19,16 +19,16 @@ impl AptBackend {
 
     fn parse_apt_cache_search(&self, output: &str) -> Vec<Package> {
         let mut packages = vec![];
-        
+
         for line in output.lines() {
             // Format: "package-name - Description here"
             if let Some((name, desc)) = line.split_once(" - ") {
                 let name = name.trim();
-                
+
                 // Get version info
                 let version = self.get_package_version(name).unwrap_or_default();
                 let installed = self.is_installed(name).unwrap_or(false);
-                
+
                 packages.push(Package {
                     name: name.to_string(),
                     version,
@@ -56,7 +56,7 @@ impl AptBackend {
             .context("Failed to run apt-cache policy")?;
 
         let stdout = String::from_utf8_lossy(&output.stdout);
-        
+
         // Parse "Candidate: x.y.z" line
         for line in stdout.lines() {
             let line = line.trim();
@@ -121,7 +121,11 @@ impl AptBackend {
         Some(Package {
             name,
             version,
-            description: if description.is_empty() { None } else { Some(description.trim().to_string()) },
+            description: if description.is_empty() {
+                None
+            } else {
+                Some(description.trim().to_string())
+            },
             popularity: 0.0,
             installed: false,
             maintainer,
@@ -162,10 +166,10 @@ impl PackageManager for AptBackend {
 
         let stdout = String::from_utf8_lossy(&output.stdout);
         let mut packages = self.parse_apt_cache_search(&stdout);
-        
+
         // Limit results
         packages.truncate(30);
-        
+
         Ok(packages)
     }
 
@@ -195,13 +199,13 @@ impl PackageManager for AptBackend {
 
         // Install all packages in one apt command for efficiency
         let pkg_names: Vec<&str> = packages.iter().map(|p| p.name.as_str()).collect();
-        
+
         if pkg_names.is_empty() {
             return Ok(results);
         }
 
         println!("--> Installing packages with apt...");
-        
+
         let mut args = vec!["apt", "install", "-y"];
         args.extend(pkg_names.iter().copied());
 
@@ -212,7 +216,11 @@ impl PackageManager for AptBackend {
             results.push(InstallResult {
                 package: pkg.name.clone(),
                 success,
-                message: if success { None } else { Some("apt install failed".to_string()) },
+                message: if success {
+                    None
+                } else {
+                    Some("apt install failed".to_string())
+                },
             });
         }
 
@@ -266,7 +274,8 @@ impl PackageManager for AptBackend {
         let stdout = String::from_utf8_lossy(&output.stdout);
         let mut updates = vec![];
 
-        for line in stdout.lines().skip(1) {  // Skip "Listing..." header
+        for line in stdout.lines().skip(1) {
+            // Skip "Listing..." header
             // Format: "package/release version arch [upgradable from: old_version]"
             if let Some(name) = line.split('/').next() {
                 if let Some(info) = self.info(&[name]).await?.into_iter().next() {
@@ -286,4 +295,3 @@ fn command_exists(cmd: &str) -> bool {
         .map(|o| o.status.success())
         .unwrap_or(false)
 }
-

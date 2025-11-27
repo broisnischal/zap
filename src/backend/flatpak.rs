@@ -28,11 +28,21 @@ impl FlatpakBackend {
             if parts.len() >= 3 {
                 let name = parts[0].trim().to_string();
                 let description = parts.get(1).map(|s| s.trim().to_string());
-                let app_id = parts.get(2).map(|s| s.trim().to_string()).unwrap_or_default();
-                let version = parts.get(3).map(|s| s.trim().to_string()).unwrap_or_default();
+                let app_id = parts
+                    .get(2)
+                    .map(|s| s.trim().to_string())
+                    .unwrap_or_default();
+                let version = parts
+                    .get(3)
+                    .map(|s| s.trim().to_string())
+                    .unwrap_or_default();
 
                 // Use app_id as the actual name for flatpak
-                let pkg_name = if !app_id.is_empty() { app_id.clone() } else { name.clone() };
+                let pkg_name = if !app_id.is_empty() {
+                    app_id.clone()
+                } else {
+                    name.clone()
+                };
 
                 packages.push(Package {
                     name: pkg_name,
@@ -96,7 +106,11 @@ impl FlatpakBackend {
         Some(Package {
             name,
             version,
-            description: if description.is_empty() { None } else { Some(description) },
+            description: if description.is_empty() {
+                None
+            } else {
+                Some(description)
+            },
             popularity: 0.0,
             installed: false,
             maintainer: None,
@@ -165,7 +179,10 @@ impl PackageManager for FlatpakBackend {
 
             // Fallback: search for the package
             if let Ok(search_results) = self.search(pkg_name).await {
-                if let Some(pkg) = search_results.into_iter().find(|p| p.name == *pkg_name || p.name.contains(pkg_name)) {
+                if let Some(pkg) = search_results
+                    .into_iter()
+                    .find(|p| p.name == *pkg_name || p.name.contains(pkg_name))
+                {
                     results.push(pkg);
                 }
             }
@@ -191,7 +208,11 @@ impl PackageManager for FlatpakBackend {
             results.push(InstallResult {
                 package: pkg.name.clone(),
                 success: status.success(),
-                message: if status.success() { None } else { Some("flatpak install failed".to_string()) },
+                message: if status.success() {
+                    None
+                } else {
+                    Some("flatpak install failed".to_string())
+                },
             });
         }
 
@@ -273,7 +294,11 @@ impl PackageManager for FlatpakBackend {
         Ok(vec![InstallResult {
             package: "all".to_string(),
             success: status.success(),
-            message: if status.success() { None } else { Some("flatpak update failed".to_string()) },
+            message: if status.success() {
+                None
+            } else {
+                Some("flatpak update failed".to_string())
+            },
         }])
     }
 }
@@ -285,4 +310,3 @@ fn command_exists(cmd: &str) -> bool {
         .map(|o| o.status.success())
         .unwrap_or(false)
 }
-

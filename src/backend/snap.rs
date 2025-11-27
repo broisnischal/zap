@@ -108,7 +108,11 @@ impl SnapBackend {
         Some(Package {
             name,
             version,
-            description: if description.is_empty() { None } else { Some(description.trim().to_string()) },
+            description: if description.is_empty() {
+                None
+            } else {
+                Some(description.trim().to_string())
+            },
             popularity: 0.0,
             installed: false,
             maintainer,
@@ -192,7 +196,11 @@ impl PackageManager for SnapBackend {
             results.push(InstallResult {
                 package: pkg.name.clone(),
                 success: status.success(),
-                message: if status.success() { None } else { Some("snap install failed".to_string()) },
+                message: if status.success() {
+                    None
+                } else {
+                    Some("snap install failed".to_string())
+                },
             });
         }
 
@@ -210,9 +218,7 @@ impl PackageManager for SnapBackend {
     }
 
     fn list_installed(&self) -> Result<Vec<(String, String)>> {
-        let output = Command::new("snap")
-            .args(["list"])
-            .output()?;
+        let output = Command::new("snap").args(["list"]).output()?;
 
         if !output.status.success() {
             return Ok(vec![]);
@@ -282,7 +288,11 @@ impl PackageManager for SnapBackend {
             results.push(InstallResult {
                 package: "all".to_string(),
                 success: status.success(),
-                message: if status.success() { None } else { Some("snap refresh failed".to_string()) },
+                message: if status.success() {
+                    None
+                } else {
+                    Some("snap refresh failed".to_string())
+                },
             });
         } else {
             for pkg in packages {
@@ -298,7 +308,11 @@ impl PackageManager for SnapBackend {
                 results.push(InstallResult {
                     package: pkg.name.clone(),
                     success: status.success(),
-                    message: if status.success() { None } else { Some("snap refresh failed".to_string()) },
+                    message: if status.success() {
+                        None
+                    } else {
+                        Some("snap refresh failed".to_string())
+                    },
                 });
             }
         }
@@ -314,4 +328,3 @@ fn command_exists(cmd: &str) -> bool {
         .map(|o| o.status.success())
         .unwrap_or(false)
 }
-

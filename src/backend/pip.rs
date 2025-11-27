@@ -1,9 +1,12 @@
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use serde::Deserialize;
 use std::process::{Command, Stdio};
 
-use super::{InstallResult, Package, PackageExtra, PackageManager};
+use super::{
+    bootstrap::{ensure_tool, BootstrapTarget},
+    InstallResult, Package, PackageExtra, PackageManager,
+};
 
 /// pip package manager backend for Python packages
 pub struct PipBackend {
@@ -29,6 +32,13 @@ struct PyPIInfo {
 
 impl PipBackend {
     pub fn new() -> Result<Self> {
+        ensure_tool(BootstrapTarget::Python)?;
+
+        if !command_exists("pip") && !command_exists("pip3") {
+            install_pip_with_python()
+                .context("pip is not available and installation via python failed")?;
+        }
+
         if !command_exists("pip") && !command_exists("pip3") {
             anyhow::bail!("pip is not available on this system");
         }
@@ -53,7 +63,7 @@ impl PipBackend {
         // PyPI's search API was deprecated, so we use the JSON API for specific packages
         // For search, we'll try the package directly or use pip search fallback
         let url = format!("https://pypi.org/pypi/{}/json", query);
-        
+
         if let Ok(response) = self.client.get(&url).send().await {
             if response.status().is_success() {
                 if let Ok(result) = response.json::<PyPISearchResult>().await {
@@ -180,7 +190,11 @@ impl PackageManager for PipBackend {
             results.push(InstallResult {
                 package: pkg.name.clone(),
                 success,
-                message: if success { None } else { Some("pip install failed".to_string()) },
+                message: if success {
+                    None
+                } else {
+                    Some("pip install failed".to_string())
+                },
             });
         }
 
@@ -275,7 +289,11 @@ impl PackageManager for PipBackend {
                 results.push(InstallResult {
                     package: "all".to_string(),
                     success: status.success(),
-                    message: if status.success() { None } else { Some("pip upgrade failed".to_string()) },
+                    message: if status.success() {
+                        None
+                    } else {
+                        Some("pip upgrade failed".to_string())
+                    },
                 });
             }
         } else {
@@ -295,7 +313,11 @@ impl PackageManager for PipBackend {
                 results.push(InstallResult {
                     package: pkg.name.clone(),
                     success,
-                    message: if success { None } else { Some("pip upgrade failed".to_string()) },
+                    message: if success {
+                        None
+                    } else {
+                        Some("pip upgrade failed".to_string())
+                    },
                 });
             }
         }
@@ -305,10 +327,51 @@ impl PackageManager for PipBackend {
 }
 
 fn command_exists(cmd: &str) -> bool {
-    Command::new("which")
-        .arg(cmd)
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
+    #[cfg(target_os = "windows")]
+    {
+        Command::new("where")
+            .arg(cmd)
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        Command::new("which")
+            .arg(cmd)
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+    }
 }
 
+fn detect_python_command() -> Option<&'static str> {
+    for cmd in ["python3", "python", "py"] {
+        if command_exists(cmd) {
+            return Some(cmd);
+        }
+    }
+    None
+}
+
+fn install_pip_with_python() -> Result<()> {
+    let python_cmd = detect_python_command()
+        .ok_or_else(|| anyhow!("Python executable not found to install pip"))?;
+
+    println!("--> Attempting to install pip via `{}`...", python_cmd);
+
+    let status = Command::new(python_cmd)
+        .args(["-m", "ensurepip", "--upgrade"])
+        .stdin(Stdio::inherit())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .status()
+        .context("Failed to run python ensurepip")?;
+
+    if !status.success() {
+        anyhow::bail!("python ensurepip failed with status {:?}", status.code());
+    }
+
+    Ok(())
+}
