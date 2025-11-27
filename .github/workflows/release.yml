@@ -27,10 +27,10 @@ jobs:
             archive: tar.gz
             
           # Linux ARM64
-          - target: aarch64-unknown-linux-gnu
-            os: ubuntu-latest
-            archive: tar.gz
-            cross: true
+          # - target: aarch64-unknown-linux-gnu
+          #   os: ubuntu-latest
+          #   archive: tar.gz
+          #   cross: true
             
           # macOS x86_64
           - target: x86_64-apple-darwin
@@ -43,9 +43,9 @@ jobs:
             archive: tar.gz
 
           # Windows x86_64
-          - target: x86_64-pc-windows-msvc
-            os: windows-latest
-            archive: zip
+          # - target: x86_64-pc-windows-msvc
+          #   os: windows-latest
+          #   archive: zip
 
     steps:
       - name: Checkout
