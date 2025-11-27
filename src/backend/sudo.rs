@@ -1,16 +1,23 @@
+#[cfg(unix)]
 use anyhow::{Context, Result};
+#[cfg(unix)]
 use std::io::{self, Write};
-use std::process::{Command, ExitStatus, Stdio};
+#[cfg(unix)]
+use std::process::{Command, ExitStatus, Output, Stdio};
+#[cfg(unix)]
 use std::sync::OnceLock;
 
+#[cfg(unix)]
 /// Global password storage - only set once per session
 static SUDO_PASSWORD: OnceLock<String> = OnceLock::new();
 
+#[cfg(unix)]
 /// Check if we need sudo (not running as root)
 pub fn needs_sudo() -> bool {
     unsafe { libc::geteuid() != 0 }
 }
 
+#[cfg(unix)]
 /// Prompt for sudo password if not already cached
 pub fn ensure_password() -> Result<()> {
     if !needs_sudo() {
@@ -41,6 +48,7 @@ pub fn ensure_password() -> Result<()> {
     Ok(())
 }
 
+#[cfg(unix)]
 /// Prompt user for their sudo password
 fn prompt_password() -> Result<()> {
     println!();
@@ -76,11 +84,13 @@ fn prompt_password() -> Result<()> {
     Ok(())
 }
 
+#[cfg(unix)]
 /// Get the cached password (if any)
 fn get_password() -> Option<&'static String> {
     SUDO_PASSWORD.get()
 }
 
+#[cfg(unix)]
 /// Run a command with sudo, using cached password
 pub fn run_sudo(args: &[&str]) -> Result<ExitStatus> {
     ensure_password()?;
@@ -131,8 +141,9 @@ pub fn run_sudo(args: &[&str]) -> Result<ExitStatus> {
     Ok(status)
 }
 
+#[cfg(unix)]
 /// Run a command with sudo and return its output
-pub fn run_sudo_output(args: &[&str]) -> Result<std::process::Output> {
+pub fn run_sudo_output(args: &[&str]) -> Result<Output> {
     ensure_password()?;
 
     if !needs_sudo() {
@@ -175,6 +186,7 @@ pub fn run_sudo_output(args: &[&str]) -> Result<std::process::Output> {
     Ok(output)
 }
 
+#[cfg(unix)]
 /// Run a command with sudo, piping from a specific directory (for makepkg, etc.)
 pub fn run_sudo_in_dir(args: &[&str], dir: &std::path::Path) -> Result<ExitStatus> {
     ensure_password()?;
@@ -221,4 +233,34 @@ pub fn run_sudo_in_dir(args: &[&str], dir: &std::path::Path) -> Result<ExitStatu
 
     let status = child.wait().context("Failed to wait for sudo command")?;
     Ok(status)
+}
+
+#[cfg(not(unix))]
+use anyhow::{bail, Result};
+#[cfg(not(unix))]
+use std::process::{ExitStatus, Output};
+
+#[cfg(not(unix))]
+pub fn needs_sudo() -> bool {
+    false
+}
+
+#[cfg(not(unix))]
+pub fn ensure_password() -> Result<()> {
+    Ok(())
+}
+
+#[cfg(not(unix))]
+pub fn run_sudo(_args: &[&str]) -> Result<ExitStatus> {
+    bail!("sudo is not supported on this platform");
+}
+
+#[cfg(not(unix))]
+pub fn run_sudo_output(_args: &[&str]) -> Result<Output> {
+    bail!("sudo is not supported on this platform");
+}
+
+#[cfg(not(unix))]
+pub fn run_sudo_in_dir(_args: &[&str], _dir: &std::path::Path) -> Result<ExitStatus> {
+    bail!("sudo is not supported on this platform");
 }

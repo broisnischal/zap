@@ -4,6 +4,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use anyhow::{Context, Result};
 
+#[cfg(not(target_os = "windows"))]
 use super::sudo;
 
 static AUTO_APPROVE: AtomicBool = AtomicBool::new(false);
