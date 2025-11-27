@@ -8,6 +8,7 @@ mod detect;
 pub mod dnf;
 pub mod flatpak;
 pub mod go;
+pub mod npm;
 pub mod pacman;
 pub mod pip;
 pub mod pkg;
@@ -162,6 +163,7 @@ pub enum PackageManagerType {
     Cargo,
     Go,
     Pip,
+    Npm,
 }
 
 impl PackageManagerType {
@@ -182,6 +184,7 @@ impl PackageManagerType {
             Self::Cargo => "Cargo",
             Self::Go => "Go",
             Self::Pip => "pip",
+            Self::Npm => "npm",
         }
     }
 
@@ -202,6 +205,7 @@ impl PackageManagerType {
             Self::Cargo => "cargo",
             Self::Go => "go",
             Self::Pip => "pip",
+            Self::Npm => "npm",
         }
     }
 
@@ -228,6 +232,6 @@ impl PackageManagerType {
 
     /// Get all language package manager types
     pub fn language_managers() -> &'static [Self] {
-        &[Self::Cargo, Self::Go, Self::Pip]
+        &[Self::Cargo, Self::Go, Self::Pip, Self::Npm]
     }
 }

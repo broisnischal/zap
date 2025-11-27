@@ -1,5 +1,6 @@
 mod backend;
 mod ui;
+mod update;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand, ValueEnum};
@@ -38,6 +39,7 @@ enum BackendChoice {
     Cargo,
     Go,
     Pip,
+    Npm,
 }
 
 #[derive(Parser)]
@@ -106,6 +108,14 @@ enum Commands {
     /// List available package managers on this system
     #[command(alias = "pm")]
     Managers,
+
+    /// List packages installed via current backend
+    #[command(alias = "ls")]
+    List,
+
+    /// Check for zap CLI updates
+    #[command(alias = "selfupdate")]
+    SelfUpdate,
 }
 
 #[tokio::main]
@@ -122,6 +132,13 @@ async fn main() -> Result<()> {
         format!("{:?}", system).cyan(),
         pm.name().green()
     ));
+
+    let self_update_requested = matches!(cli.command.as_ref(), Some(Commands::SelfUpdate));
+    if std::env::var("ZAP_DISABLE_UPDATE_CHECK").is_err() && !self_update_requested {
+        if let Err(err) = maybe_notify_update().await {
+            print_warning(&format!("Skipping update check: {}", err));
+        }
+    }
 
     match cli.command {
         Some(Commands::Search {
@@ -165,6 +182,14 @@ async fn main() -> Result<()> {
             show_available_managers();
         }
 
+        Some(Commands::List) => {
+            list_installed_packages(&pm)?;
+        }
+
+        Some(Commands::SelfUpdate) => {
+            run_self_update().await?;
+        }
+
         None => {
             // If packages provided directly, install them
             if !cli.packages.is_empty() {
@@ -197,6 +222,7 @@ fn create_backend(system: &System, choice: BackendChoice) -> Result<Arc<dyn Pack
         BackendChoice::Cargo => Ok(Arc::new(backend::cargo::CargoBackend::new()?)),
         BackendChoice::Go => Ok(Arc::new(backend::go::GoBackend::new()?)),
         BackendChoice::Pip => Ok(Arc::new(backend::pip::PipBackend::new()?)),
+        BackendChoice::Npm => Ok(Arc::new(backend::npm::NpmBackend::new()?)),
     }
 }
 
@@ -246,8 +272,11 @@ fn create_auto_backend(system: &System) -> Result<Arc<dyn PackageManager>> {
             if let Ok(backend) = backend::go::GoBackend::new() {
                 return Ok(Arc::new(backend));
             }
+            if let Ok(backend) = backend::npm::NpmBackend::new() {
+                return Ok(Arc::new(backend));
+            }
             anyhow::bail!(
-                "No supported package manager found for Windows. Use -b to specify a backend (winget, scoop, choco, cargo, pip, go)."
+                "No supported package manager found for Windows. Use -b to specify a backend (winget, scoop, choco, cargo, pip, go, npm)."
             );
         }
         System::Unknown(name) => {
@@ -255,7 +284,7 @@ fn create_auto_backend(system: &System) -> Result<Arc<dyn PackageManager>> {
                 "Unsupported system: {}. Use -b to specify a backend. Supported backends:\n\
                  System: apt, aur, brew, dnf, pacman, pkg, zypper\n\
                  Universal: flatpak, snap\n\
-                 Language: cargo, go, pip",
+                 Language: cargo, go, pip, npm",
                 name
             );
         }
@@ -322,6 +351,60 @@ fn show_available_managers() {
         "Use -b <backend> to select a specific package manager".bright_black()
     );
     println!();
+}
+
+fn list_installed_packages(pm: &Arc<dyn PackageManager>) -> Result<()> {
+    let installed = pm.list_installed()?;
+
+    println!();
+    println!("{}", "Installed Packages".cyan().bold());
+    println!("{}", "=".repeat(40).bright_black());
+
+    if installed.is_empty() {
+        println!(
+            "{} {}",
+            "-->".green(),
+            "No packages recorded by this backend."
+        );
+    } else {
+        for (name, version) in installed {
+            println!(
+                "  {} {} {}",
+                "•".bright_black(),
+                name.cyan().bold(),
+                version.green()
+            );
+        }
+    }
+    println!();
+
+    Ok(())
+}
+
+async fn maybe_notify_update() -> Result<()> {
+    if let Some(release) = update::fetch_newer_release(env!("CARGO_PKG_VERSION")).await? {
+        update::print_update_message(&release);
+        println!(
+            "{}",
+            "Set ZAP_DISABLE_UPDATE_CHECK=1 to disable automatic checks.".bright_black()
+        );
+    }
+    Ok(())
+}
+
+async fn run_self_update() -> Result<()> {
+    match update::fetch_newer_release(env!("CARGO_PKG_VERSION")).await {
+        Ok(Some(release)) => {
+            update::print_update_message(&release);
+        }
+        Ok(None) => {
+            print_success("zap is already up to date!");
+        }
+        Err(err) => {
+            print_warning(&format!("Failed to check for zap updates: {}", err));
+        }
+    }
+    Ok(())
 }
 
 async fn search_packages(

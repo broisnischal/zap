@@ -102,6 +102,7 @@ cargo install --path . --force
 | Python | pip | `-b pip` | ✅ Full support |
 | Rust | Cargo | `-b cargo` | ✅ Full support |
 | Go | go install | `-b go` | ✅ Full support |
+| Node.js | npm | `-b npm` | ✅ Full support |
 
 ## Features
 
@@ -187,6 +188,34 @@ zap system
 zap managers
 ```
 
+### List Installed Packages
+```bash
+# Show everything installed through the current backend
+zap list
+
+# Force a specific backend
+zap -b pip list
+zap -b npm list
+```
+
+### Language Package Managers
+```bash
+# Search npm interactively
+zap -b npm
+
+# Install npm packages directly
+zap -b npm install typescript eslint
+
+# Live search PyPI packages
+zap -b pip
+
+# Fetch detailed info from pip/npm
+zap -b pip info numpy
+zap -b npm info react
+```
+
+Use `zap search -I <term>` with `-b npm` or `-b pip` for fuzzy selection inside those ecosystems.
+
 ## Commands
 
 | Command | Alias | Description |
@@ -198,6 +227,8 @@ zap managers
 | `update` | - | Update packages |
 | `system` | - | Show system info |
 | `managers` | `pm` | List available package managers |
+| `list` | `ls` | Show packages installed via current backend |
+| `self-update` | `selfupdate` | Check for zap CLI updates |
 
 ## Global Options
 
@@ -213,10 +244,18 @@ zap managers
 ```
 System:     apt, aur, brew, dnf, pacman, pkg, zypper, winget, scoop, choco
 Universal:  flatpak, snap
-Language:   cargo, go, pip
+Language:   cargo, go, pip, npm
 ```
 
 `zap` will automatically prompt to install missing Windows package managers (winget, Scoop, Chocolatey) or Python for the `pip` backend. Use `-y/--yes` to auto-approve those prompts in non-interactive environments.
+
+## Updating zap
+
+- `zap` automatically checks GitHub Releases once per run (set `ZAP_DISABLE_UPDATE_CHECK=1` to skip).
+- Run `zap self-update` at any time to compare your binary against the latest release.
+- To update manually, rerun the install script:
+  - Linux/macOS: `curl -fsSL https://raw.githubusercontent.com/broisnischal/zap/main/install.sh | bash -s latest`
+  - Windows: download the newest ZIP from the [releases page](https://github.com/broisnischal/zap/releases) and replace `zap.exe`.
 
 ## How It Works
 
