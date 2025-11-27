@@ -2,7 +2,7 @@
 
 A fast, cross-platform universal package manager that auto-detects your system.
 
-[![Release](https://img.shields.io/github/v/release/YOUR_USERNAME/zap?style=flat-square)](https://github.com/YOUR_USERNAME/zap/releases)
+[![Release](https://img.shields.io/github/v/release/broisnischal/zap?style=flat-square)](https://github.com/broisnischal/zap/releases)
 [![License](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](LICENSE)
 
 ## Installation
@@ -10,39 +10,54 @@ A fast, cross-platform universal package manager that auto-detects your system.
 ### Quick Install (Recommended)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/YOUR_USERNAME/zap/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/broisnischal/zap/main/install.sh | bash
 ```
 
 ### Install Specific Version
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/YOUR_USERNAME/zap/main/install.sh | bash -s v0.1.0
+curl -fsSL https://raw.githubusercontent.com/broisnischal/zap/main/install.sh | bash -s v0.1.0
 ```
 
 ### Manual Download
 
-Download the latest release for your platform from [GitHub Releases](https://github.com/YOUR_USERNAME/zap/releases):
+Download the latest release for your platform from [GitHub Releases](https://github.com/broisnischal/zap/releases):
 
 | Platform | Architecture | Download |
 |----------|--------------|----------|
-| Linux | x86_64 | [zap-x86_64-unknown-linux-gnu.tar.gz](https://github.com/YOUR_USERNAME/zap/releases/latest/download/zap-x86_64-unknown-linux-gnu.tar.gz) |
-| Linux | ARM64 | [zap-aarch64-unknown-linux-gnu.tar.gz](https://github.com/YOUR_USERNAME/zap/releases/latest/download/zap-aarch64-unknown-linux-gnu.tar.gz) |
-| macOS | Intel | [zap-x86_64-apple-darwin.tar.gz](https://github.com/YOUR_USERNAME/zap/releases/latest/download/zap-x86_64-apple-darwin.tar.gz) |
-| macOS | Apple Silicon | [zap-aarch64-apple-darwin.tar.gz](https://github.com/YOUR_USERNAME/zap/releases/latest/download/zap-aarch64-apple-darwin.tar.gz) |
-| FreeBSD | x86_64 | [zap-x86_64-unknown-freebsd.tar.gz](https://github.com/YOUR_USERNAME/zap/releases/latest/download/zap-x86_64-unknown-freebsd.tar.gz) |
+| Linux | x86_64 | [zap-x86_64-unknown-linux-gnu.tar.gz](https://github.com/broisnischal/zap/releases/latest/download/zap-x86_64-unknown-linux-gnu.tar.gz) |
+| Linux | ARM64 | [zap-aarch64-unknown-linux-gnu.tar.gz](https://github.com/broisnischal/zap/releases/latest/download/zap-aarch64-unknown-linux-gnu.tar.gz) |
+| macOS | Intel | [zap-x86_64-apple-darwin.tar.gz](https://github.com/broisnischal/zap/releases/latest/download/zap-x86_64-apple-darwin.tar.gz) |
+| macOS | Apple Silicon | [zap-aarch64-apple-darwin.tar.gz](https://github.com/broisnischal/zap/releases/latest/download/zap-aarch64-apple-darwin.tar.gz) |
+| FreeBSD | x86_64 | [zap-x86_64-unknown-freebsd.tar.gz](https://github.com/broisnischal/zap/releases/latest/download/zap-x86_64-unknown-freebsd.tar.gz) |
 
 ```bash
 # Example: Linux x86_64
-curl -LO https://github.com/YOUR_USERNAME/zap/releases/latest/download/zap-x86_64-unknown-linux-gnu.tar.gz
+curl -LO https://github.com/broisnischal/zap/releases/latest/download/zap-x86_64-unknown-linux-gnu.tar.gz
 tar -xzf zap-x86_64-unknown-linux-gnu.tar.gz
 sudo mv zap /usr/local/bin/
 ```
+
+### Windows Install (PowerShell)
+
+To install globally on Windows, run PowerShell as Administrator and execute:
+
+```powershell
+$dest = "$env:ProgramFiles\zap"
+New-Item -ItemType Directory -Force -Path $dest | Out-Null
+Invoke-WebRequest https://github.com/broisnischal/zap/releases/latest/download/zap-x86_64-pc-windows-msvc.zip -OutFile zap.zip
+Expand-Archive zap.zip -DestinationPath $dest -Force
+Remove-Item zap.zip
+setx PATH "$($env:PATH);$dest"
+```
+
+Restart your terminal and `zap.exe` will be available everywhere (e.g., `zap system`).
 
 ### Build from Source
 
 ```bash
 # Clone the repository
-git clone https://github.com/YOUR_USERNAME/zap.git
+git clone https://github.com/broisnischal/zap.git
 cd zap
 
 # Build and install
