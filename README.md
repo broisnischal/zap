@@ -10,13 +10,13 @@ A fast, cross-platform universal package manager that auto-detects your system.
 ### Quick Install (Recommended)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/broisnischal/zap/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/broisnischal/zap/master/install.sh | bash
 ```
 
 ### Install Specific Version
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/broisnischal/zap/main/install.sh | bash -s v0.1.0
+curl -fsSL https://raw.githubusercontent.com/broisnischal/zap/master/install.sh | bash -s v0.0.5
 ```
 
 ### Manual Download
@@ -276,7 +276,7 @@ Language:   cargo, go, pip, npm
 - `zap` automatically checks GitHub Releases once per run (set `ZAP_DISABLE_UPDATE_CHECK=1` to skip).
 - Run `zap self-update` at any time to compare your binary against the latest release.
 - To update manually, rerun the install script:
-  - Linux/macOS: `curl -fsSL https://raw.githubusercontent.com/broisnischal/zap/main/install.sh | bash -s latest`
+  - Linux/macOS: `curl -fsSL https://raw.githubusercontent.com/broisnischal/zap/master/install.sh | bash -s latest`
   - Windows: download the newest ZIP from the [releases page](https://github.com/broisnischal/zap/releases) and replace `zap.exe`.
 
 ## How It Works

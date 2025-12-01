@@ -1,13 +1,13 @@
 #!/bin/bash
 #
 # zap installer script
-# Usage: curl -fsSL https://raw.githubusercontent.com/YOUR_USERNAME/zap/main/install.sh | bash
+# Usage: curl -fsSL https://raw.githubusercontent.com/broisnischal/zap/master/install.sh | bash
 #
 
 set -e
 
 # Configuration
-REPO="YOUR_USERNAME/zap"  # Change this to your GitHub username/repo
+REPO="broisnischal/zap"
 INSTALL_DIR="${ZAP_INSTALL_DIR:-$HOME/.local/bin}"
 BINARY_NAME="zap"
 
