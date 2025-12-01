@@ -1,4 +1,5 @@
 use anyhow::Result;
+use colored::Colorize;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -29,7 +30,7 @@ pub fn detect_package_type(name: &str) -> PackageType {
     }
 
     // Check for npm packages with slashes (but not Go packages)
-    if name.contains("/") && !name.starts_with("github.com/") && !name.starts_with("golang.org/") && !name.starts_with("gopkg.in/") {
+    if name.contains("/") && !name.starts_with("github.com/") && !name.starts_with("golang.org/") && !name.starts_with("gopkg.in/") && !name.starts_with("deno.land/") {
         // Could be npm scoped package without @
         // But also could be other things, so we'll try npm first
         return PackageType::Npm;
@@ -38,6 +39,11 @@ pub fn detect_package_type(name: &str) -> PackageType {
     // Check for Go-style packages
     if name.starts_with("github.com/") || name.starts_with("golang.org/") || name.starts_with("gopkg.in/") {
         return PackageType::Go;
+    }
+
+    // Check for Deno packages
+    if name.starts_with("deno.land/") {
+        return PackageType::Npm; // Use npm type for now, will be handled by deno backend
     }
 
     // For everything else, assume it could be a system package or language package
@@ -51,18 +57,32 @@ pub struct MultiBackend {
 }
 
 impl MultiBackend {
-    /// Create a new multi-backend manager with all available backends
+    /// Create a new multi-backend manager with all available package managers
     pub fn new() -> Result<Self> {
         let available = detect_available_package_managers();
         let mut backends = Vec::new();
 
+        println!("--> Detected {} available package managers: {}", 
+                 available.len(), 
+                 available.join(", "));
+
         // Try to create each available backend
         for backend_id in available {
-            if let Ok(backend) = create_backend_by_id(backend_id) {
-                backends.push((backend_id.to_string(), backend));
+            match create_backend_by_id(backend_id) {
+                Ok(backend) => {
+                    backends.push((backend_id.to_string(), backend));
+                }
+                Err(e) => {
+                    eprintln!("  --> Warning: Failed to initialize {} backend: {}", backend_id, e);
+                }
             }
         }
 
+        if backends.is_empty() {
+            anyhow::bail!("No package managers could be initialized");
+        }
+
+        println!("--> Initialized {} package managers", backends.len());
         Ok(Self { backends })
     }
 
@@ -139,6 +159,8 @@ impl MultiBackend {
         let mut all_results = Vec::new();
         let mut packages_by_backend: HashMap<String, Vec<Package>> = HashMap::new();
 
+        println!("--> Searching across {} available package managers...", self.backends.len());
+
         // For each package, try to find it in appropriate backends
         for package_name in package_names {
             let pkg_type = detect_package_type(&package_name);
@@ -146,60 +168,83 @@ impl MultiBackend {
 
             // Try backends based on detected type
             let backends_to_try: Vec<&str> = match pkg_type {
-                PackageType::Npm => vec!["npm"],
+                PackageType::Npm => vec!["npm", "deno"], // Try npm first, then deno
                 PackageType::Pip => vec!["pip"],
                 PackageType::Cargo => vec!["cargo"],
                 PackageType::Go => vec!["go"],
                 PackageType::System => {
                     // For system packages, try all system backends
                     // Order matters: try native package managers first, then AUR/universal
-                    let mut system_backends: Vec<&str> = self
-                        .backends
-                        .iter()
-                        .filter(|(id, _)| {
-                            matches!(
-                                id.as_str(),
-                                "pacman" | "apt" | "dnf" | "zypper" | "pkg" | "brew"
-                                    | "winget" | "scoop" | "choco"
-                            )
-                        })
-                        .map(|(id, _)| id.as_str())
-                        .collect();
+                    // CRITICAL: pacman must come before AUR to avoid installing main repo packages via AUR
+                    let priority_order = ["pacman", "apt", "dnf", "zypper", "pkg", "brew", "winget", "scoop", "choco"];
+                    let mut system_backends: Vec<&str> = Vec::new();
                     
-                    // Then add AUR and universal package managers
+                    // Add backends in priority order
+                    for priority_id in &priority_order {
+                        if self.backends.iter().any(|(id, _)| id == *priority_id) {
+                            system_backends.push(priority_id);
+                        }
+                    }
+                    
+                    // Add any other system backends not in priority list
+                    for (id, _) in &self.backends {
+                        if matches!(
+                            id.as_str(),
+                            "pacman" | "apt" | "dnf" | "zypper" | "pkg" | "brew"
+                                | "winget" | "scoop" | "choco"
+                        ) && !system_backends.contains(&id.as_str()) {
+                            system_backends.push(id.as_str());
+                        }
+                    }
+                    
+                    // Then add AUR and universal package managers (AUR should be last for system packages)
                     let mut aur_universal: Vec<&str> = self
                         .backends
                         .iter()
                         .filter(|(id, _)| {
-                            matches!(id.as_str(), "aur" | "flatpak" | "snap")
+                            matches!(id.as_str(), "flatpak" | "snap")
                         })
                         .map(|(id, _)| id.as_str())
                         .collect();
+                    
+                    // Add AUR last (after flatpak/snap)
+                    if self.backends.iter().any(|(id, _)| id == "aur") {
+                        aur_universal.push("aur");
+                    }
                     
                     system_backends.append(&mut aur_universal);
                     system_backends
                 }
                 PackageType::Unknown => {
                     // For unknown packages, try system backends first, then language backends
-                    let mut backends: Vec<&str> = self
-                        .backends
-                        .iter()
-                        .filter(|(id, _)| {
-                            matches!(
-                                id.as_str(),
-                                "pacman" | "apt" | "dnf" | "zypper" | "pkg" | "brew"
-                                    | "winget" | "scoop" | "choco" | "aur" | "flatpak" | "snap"
-                            )
-                        })
-                        .map(|(id, _)| id.as_str())
-                        .collect();
+                    // CRITICAL: pacman must come before AUR
+                    let priority_order = ["pacman", "apt", "dnf", "zypper", "pkg", "brew", "winget", "scoop", "choco", "flatpak", "snap", "aur"];
+                    let mut backends: Vec<&str> = Vec::new();
+                    
+                    // Add backends in priority order
+                    for priority_id in &priority_order {
+                        if self.backends.iter().any(|(id, _)| id == *priority_id) {
+                            backends.push(priority_id);
+                        }
+                    }
+                    
+                    // Add any other system backends not in priority list
+                    for (id, _) in &self.backends {
+                        if matches!(
+                            id.as_str(),
+                            "pacman" | "apt" | "dnf" | "zypper" | "pkg" | "brew"
+                                | "winget" | "scoop" | "choco" | "aur" | "flatpak" | "snap"
+                        ) && !backends.contains(&id.as_str()) {
+                            backends.push(id.as_str());
+                        }
+                    }
                     
                     // Then add language package managers
                     let mut lang_backends: Vec<&str> = self
                         .backends
                         .iter()
                         .filter(|(id, _)| {
-                            matches!(id.as_str(), "npm" | "pip" | "cargo" | "go")
+                            matches!(id.as_str(), "npm" | "pip" | "cargo" | "go" | "deno" | "pub")
                         })
                         .map(|(id, _)| id.as_str())
                         .collect();
@@ -212,15 +257,43 @@ impl MultiBackend {
             // Try each backend in order
             for backend_id in backends_to_try {
                 if let Some(backend) = self.get_backend(backend_id) {
-                    if let Ok(mut packages) = backend.info(&[&package_name]).await {
-                        if !packages.is_empty() {
+                    match backend.info(&[&package_name]).await {
+                        Ok(mut packages) if !packages.is_empty() => {
+                            // For AUR backend, filter out packages without URL paths (they're not installable via AUR)
+                            if backend_id == "aur" {
+                                packages.retain(|pkg| {
+                                    let has_url_path = pkg.extra.aur_url_path.is_some();
+                                    if !has_url_path {
+                                        // This package is in AUR database but not installable via AUR
+                                        // (likely in main repos), so skip it and try next backend
+                                    }
+                                    has_url_path
+                                });
+                                
+                                // If all packages were filtered out, continue to next backend
+                                if packages.is_empty() {
+                                    continue;
+                                }
+                            }
+                            
                             // Found it! Add to the appropriate backend's list
+                            println!("  --> Found '{}' in {}", package_name, backend_id);
                             packages_by_backend
                                 .entry(backend_id.to_string())
                                 .or_insert_with(Vec::new)
                                 .append(&mut packages);
                             found = true;
                             break; // Found in this backend, no need to try others
+                        }
+                        Ok(_) => {
+                            // Package not found in this backend, continue silently
+                        }
+                        Err(e) => {
+                            // Error searching, but continue trying other backends
+                            // Only show error if it's not a "not found" type error
+                            if !e.to_string().contains("not found") && !e.to_string().contains("No package") {
+                                eprintln!("  --> Warning: {} error: {}", backend_id, e);
+                            }
                         }
                     }
                 }
@@ -272,16 +345,97 @@ impl MultiBackend {
         // Install packages grouped by backend
         for (backend_id, packages) in packages_by_backend {
             if let Some(backend) = self.get_backend(&backend_id) {
+                println!();
+                println!("--> Installing {} packages via {}:", 
+                         packages.len(), 
+                         backend.name().cyan().bold());
+                for pkg in &packages {
+                    println!("  {} {} {}", 
+                             "•".green(), 
+                             pkg.name.cyan().bold(), 
+                             pkg.version.green());
+                }
+                
                 match backend.install(&packages).await {
-                    Ok(mut results) => all_results.append(&mut results),
+                    Ok(mut results) => {
+                        // Check for failed installations and try fallback
+                        let failed_packages: Vec<String> = results
+                            .iter()
+                            .filter(|r| !r.success)
+                            .map(|r| r.package.clone())
+                            .collect();
+                        
+                        // If AUR installation failed for some packages, try pacman as fallback
+                        if backend_id == "aur" && !failed_packages.is_empty() {
+                            if let Some(pacman_backend) = self.get_backend("pacman") {
+                                println!();
+                                println!("--> Attempting fallback installation via pacman for failed packages...");
+                                for failed_pkg in &failed_packages {
+                                    if let Ok(pacman_packages) = pacman_backend.info(&[failed_pkg]).await {
+                                        if !pacman_packages.is_empty() {
+                                            println!("  --> Found '{}' in pacman, installing...", failed_pkg);
+                                            if let Ok(mut fallback_results) = pacman_backend.install(&pacman_packages).await {
+                                                // Replace failed result with successful fallback result
+                                                results.retain(|r| r.package != *failed_pkg);
+                                                all_results.append(&mut fallback_results);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        
+                        all_results.append(&mut results);
+                    }
                     Err(e) => {
-                        // Mark all packages as failed
-                        for pkg in packages {
-                            all_results.push(InstallResult {
-                                package: pkg.name,
-                                success: false,
-                                message: Some(format!("Installation failed: {}", e)),
-                            });
+                        // If AUR installation completely failed, try pacman as fallback
+                        if backend_id == "aur" {
+                            if let Some(pacman_backend) = self.get_backend("pacman") {
+                                println!();
+                                println!("--> Installation via AUR failed, attempting fallback via pacman...");
+                                let mut fallback_success = false;
+                                for pkg in &packages {
+                                    if let Ok(pacman_packages) = pacman_backend.info(&[&pkg.name]).await {
+                                        if !pacman_packages.is_empty() {
+                                            println!("  --> Found '{}' in pacman, installing...", pkg.name);
+                                            if let Ok(mut fallback_results) = pacman_backend.install(&pacman_packages).await {
+                                                all_results.append(&mut fallback_results);
+                                                fallback_success = true;
+                                                continue;
+                                            }
+                                        }
+                                    }
+                                }
+                                
+                                if !fallback_success {
+                                    // Mark all packages as failed
+                                    for pkg in packages {
+                                        all_results.push(InstallResult {
+                                            package: pkg.name,
+                                            success: false,
+                                            message: Some(format!("Installation via {} failed: {}", backend_id, e)),
+                                        });
+                                    }
+                                }
+                            } else {
+                                // No pacman fallback available, mark as failed
+                                for pkg in packages {
+                                    all_results.push(InstallResult {
+                                        package: pkg.name,
+                                        success: false,
+                                        message: Some(format!("Installation via {} failed: {}", backend_id, e)),
+                                    });
+                                }
+                            }
+                        } else {
+                            // Mark all packages as failed
+                            for pkg in packages {
+                                all_results.push(InstallResult {
+                                    package: pkg.name,
+                                    success: false,
+                                    message: Some(format!("Installation via {} failed: {}", backend_id, e)),
+                                });
+                            }
                         }
                     }
                 }
@@ -311,6 +465,10 @@ fn create_backend_by_id(id: &str) -> Result<Arc<dyn PackageManager>> {
         "go" => Ok(Arc::new(super::go::GoBackend::new()?)),
         "pip" => Ok(Arc::new(super::pip::PipBackend::new()?)),
         "npm" => Ok(Arc::new(super::npm::NpmBackend::new()?)),
+        "deno" => Ok(Arc::new(super::deno::DenoBackend::new()?)),
+        "pub" => Ok(Arc::new(super::r#pub::PubBackend::new()?)),
+        "dockerhub" => Ok(Arc::new(super::dockerhub::DockerhubBackend::new()?)),
+        "zsh" => Ok(Arc::new(super::zsh::ZshBackend::new()?)),
         _ => anyhow::bail!("Unknown backend: {}", id),
     }
 }

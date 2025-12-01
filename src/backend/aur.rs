@@ -787,13 +787,39 @@ impl PackageManager for AurBackend {
             anyhow::bail!("AUR API error: {}", error);
         }
 
-        Ok(response.results.into_iter().map(Package::from).collect())
+        // Filter out packages without URL paths - these are in AUR database but not installable
+        // (they're likely in main repos and shouldn't be installed via AUR)
+        let aur_packages: Vec<Package> = response
+            .results
+            .into_iter()
+            .map(Package::from)
+            .filter(|pkg| {
+                // Only return packages that have URL paths (are installable via AUR)
+                // Packages without URL paths are in the AUR database but not actually AUR packages
+                pkg.extra.aur_url_path.is_some()
+            })
+            .collect();
+
+        Ok(aur_packages)
     }
 
     async fn install(&self, packages: &[Package]) -> Result<Vec<InstallResult>> {
         let mut results = vec![];
 
         for package in packages {
+            // Validate that package has AUR URL path before attempting installation
+            if package.extra.aur_url_path.is_none() {
+                results.push(InstallResult {
+                    package: package.name.clone(),
+                    success: false,
+                    message: Some(format!(
+                        "Package {} has no AUR URL path (likely in main repos, try pacman instead)",
+                        package.name
+                    )),
+                });
+                continue;
+            }
+            
             let result = self.install_with_deps(package).await;
 
             results.push(InstallResult {

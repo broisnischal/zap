@@ -306,9 +306,19 @@ impl PackageManager for NpmBackend {
             return Ok(vec![]);
         }
 
-        println!("--> Installing packages globally via npm...");
+        // Check if we're in a project directory (has package.json)
+        let is_project = std::path::Path::new("package.json").exists();
+        
+        if is_project {
+            println!("--> Installing packages locally (project dependencies)...");
+        } else {
+            println!("--> Installing packages locally (creating package.json)...");
+            // Initialize package.json if it doesn't exist
+            let _ = Self::run_npm(&["init", "-y"]);
+        }
 
-        let mut args = vec!["install", "-g"];
+        // Install locally (without -g flag)
+        let mut args = vec!["install", "--save"];
         args.extend(pkg_names.iter().copied());
 
         let status = Self::run_npm(&args)?;

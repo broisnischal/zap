@@ -173,17 +173,35 @@ impl PackageManager for PipBackend {
             return Ok(results);
         }
 
-        println!("--> Installing packages with pip...");
-
+        // Check if we're in a project directory (has requirements.txt or pyproject.toml)
+        let is_project = std::path::Path::new("requirements.txt").exists() 
+            || std::path::Path::new("pyproject.toml").exists();
+        
         let pip_cmd = Self::get_pip_cmd();
-        let status = Command::new(pip_cmd)
-            .args(["install", "--user"])
-            .args(&pkg_names)
-            .stdin(Stdio::inherit())
-            .stdout(Stdio::inherit())
-            .stderr(Stdio::inherit())
-            .status()
-            .context("Failed to run pip install")?;
+        
+        let status = if is_project {
+            println!("--> Installing packages locally (project dependencies)...");
+            // Install to current directory or virtual environment
+            Command::new(pip_cmd)
+                .args(["install"])
+                .args(&pkg_names)
+                .stdin(Stdio::inherit())
+                .stdout(Stdio::inherit())
+                .stderr(Stdio::inherit())
+                .status()
+                .context("Failed to run pip install")?
+        } else {
+            println!("--> Installing packages locally (user directory)...");
+            // Install to user directory (not system-wide)
+            Command::new(pip_cmd)
+                .args(["install", "--user"])
+                .args(&pkg_names)
+                .stdin(Stdio::inherit())
+                .stdout(Stdio::inherit())
+                .stderr(Stdio::inherit())
+                .status()
+                .context("Failed to run pip install")?
+        };
 
         let success = status.success();
         for pkg in packages {

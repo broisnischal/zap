@@ -262,6 +262,12 @@ pub fn detect_available_package_managers() -> Vec<&'static str> {
     if command_exists("npm") {
         managers.push("npm");
     }
+    if command_exists("deno") {
+        managers.push("deno");
+    }
+    if command_exists("dart") || command_exists("pub") {
+        managers.push("pub");
+    }
 
     managers
 }

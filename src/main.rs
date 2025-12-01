@@ -3,7 +3,7 @@ mod devtools;
 mod ui;
 mod update;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
 use colored::Colorize;
 use crossterm::{
@@ -43,6 +43,11 @@ enum BackendChoice {
     Go,
     Pip,
     Npm,
+    Deno,
+    Pub,
+    // Special
+    Dockerhub,
+    Zsh,
 }
 
 #[derive(Parser)]
@@ -123,6 +128,10 @@ enum Commands {
     /// Show curated developer tools suggestions
     DevTools,
 
+    /// Zsh plugin management
+    #[command(subcommand)]
+    Zsh(ZshCommands),
+
     /// npm package manager commands
     #[command(subcommand)]
     Npm(NpmCommands),
@@ -138,6 +147,10 @@ enum Commands {
     /// go package manager commands
     #[command(subcommand)]
     Go(GoCommands),
+
+    /// Docker Hub commands
+    #[command(subcommand)]
+    Docker(DockerCommands),
 }
 
 #[derive(Subcommand)]
@@ -192,6 +205,23 @@ enum CargoCommands {
 }
 
 #[derive(Subcommand)]
+enum ZshCommands {
+    /// List available zsh plugins
+    Plugins,
+    /// Install zsh plugins
+    Install {
+        /// Plugin names to install
+        #[arg(required = true)]
+        plugins: Vec<String>,
+    },
+    /// Search zsh plugins
+    Search {
+        /// Search query
+        query: String,
+    },
+}
+
+#[derive(Subcommand)]
 enum GoCommands {
     /// Install go packages
     Install {
@@ -208,14 +238,58 @@ enum GoCommands {
     List,
 }
 
+#[derive(Subcommand)]
+enum DockerCommands {
+    /// Install (pull) Docker images
+    Install {
+        /// Image names to pull
+        #[arg(required = true)]
+        images: Vec<String>,
+    },
+    /// Search Docker Hub images
+    Search {
+        /// Search query
+        query: String,
+    },
+    /// List pulled Docker images
+    List,
+    /// Run a Docker container
+    Run {
+        /// Image name to run
+        image: String,
+        /// Container name (optional)
+        #[arg(short, long)]
+        name: Option<String>,
+        /// Additional docker run arguments
+        #[arg(trailing_var_arg = true)]
+        args: Vec<String>,
+    },
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
     backend::bootstrap::set_auto_approve(cli.yes);
 
-    // Detect the system and create appropriate backend
+    // Detect the system and create appropriate backend (only if needed)
     let system = detect_system();
-    let pm: Arc<dyn PackageManager> = create_backend(&system, cli.backend)?;
+    
+    // Some commands don't need a backend at all
+    let needs_backend = !matches!(
+        cli.command.as_ref(),
+        Some(Commands::Zsh(ZshCommands::Plugins))
+            | Some(Commands::System)
+            | Some(Commands::Managers)
+            | Some(Commands::SelfUpdate)
+            | Some(Commands::DevTools)
+    );
+    
+    let pm: Arc<dyn PackageManager> = if needs_backend {
+        create_backend(&system, cli.backend)?
+    } else {
+        // Create a dummy backend for commands that don't need it
+        create_backend(&system, cli.backend)?
+    };
     
     // Determine if we'll need sudo for this operation
     // Install, Update, Interactive mode, and direct package installation require sudo
@@ -233,11 +307,25 @@ async fn main() -> Result<()> {
         sudo::ensure_password()?;
     }
 
-    print_info(&format!(
-        "Detected: {} (using {})",
-        format!("{:?}", system).cyan(),
-        pm.name().green()
-    ));
+    // Only print backend info if we're not using multi-backend for install and we need a backend
+    let using_multi_backend = matches!(cli.backend, BackendChoice::Auto)
+        && matches!(cli.command.as_ref(), Some(Commands::Install { .. }) | None);
+    
+    // Don't show backend message for commands that don't need it
+    if needs_backend {
+        if !using_multi_backend {
+            print_info(&format!(
+                "Detected: {} (using {})",
+                format!("{:?}", system).cyan(),
+                pm.name().green()
+            ));
+        } else {
+            print_info(&format!(
+                "Detected: {} (using multi-backend auto-detection)",
+                format!("{:?}", system).cyan()
+            ));
+        }
+    }
 
     let self_update_requested = matches!(cli.command.as_ref(), Some(Commands::SelfUpdate));
     if std::env::var("ZAP_DISABLE_UPDATE_CHECK").is_err() && !self_update_requested {
@@ -325,15 +413,26 @@ async fn main() -> Result<()> {
             handle_go_command(cmd, &go_pm).await?;
         }
 
+        Some(Commands::Docker(cmd)) => {
+            let docker_pm: Arc<dyn PackageManager> = Arc::new(backend::dockerhub::DockerhubBackend::new()?);
+            handle_docker_command(cmd, &docker_pm).await?;
+        }
+
+        Some(Commands::Zsh(cmd)) => {
+            // For Plugins command, we don't need a backend
+            if matches!(cmd, ZshCommands::Plugins) {
+                handle_zsh_command(cmd, &pm).await?;
+            } else {
+                let zsh_pm: Arc<dyn PackageManager> = Arc::new(backend::zsh::ZshBackend::new()?);
+                handle_zsh_command(cmd, &zsh_pm).await?;
+            }
+        }
+
         None => {
             // If packages provided directly, install them
             if !cli.packages.is_empty() {
-                // Use multi-backend for auto-detection
-                if matches!(cli.backend, BackendChoice::Auto) {
-                    install_packages_multi(cli.packages).await?;
-                } else {
-                    install_packages(&pm, cli.packages).await?;
-                }
+                // Always use multi-backend for auto-detection when packages are provided directly
+                install_packages_multi(cli.packages).await?;
             } else {
                 // Default to interactive mode
                 interactive_mode(&pm).await?;
@@ -363,6 +462,10 @@ fn create_backend(system: &System, choice: BackendChoice) -> Result<Arc<dyn Pack
         BackendChoice::Go => Ok(Arc::new(backend::go::GoBackend::new()?)),
         BackendChoice::Pip => Ok(Arc::new(backend::pip::PipBackend::new()?)),
         BackendChoice::Npm => Ok(Arc::new(backend::npm::NpmBackend::new()?)),
+        BackendChoice::Deno => Ok(Arc::new(backend::deno::DenoBackend::new()?)),
+        BackendChoice::Pub => Ok(Arc::new(backend::r#pub::PubBackend::new()?)),
+        BackendChoice::Dockerhub => Ok(Arc::new(backend::dockerhub::DockerhubBackend::new()?)),
+        BackendChoice::Zsh => Ok(Arc::new(backend::zsh::ZshBackend::new()?)),
     }
 }
 
@@ -707,31 +810,30 @@ async fn interactive_mode(pm: &Arc<dyn PackageManager>) -> Result<()> {
 
             let query = searcher.get_query().to_string();
 
-            // Show suggestions if query is empty or very short
-            if query.is_empty() || query.len() == 1 {
-                if searcher.has_suggestions() && !searcher.has_results() {
-                    // Already showing suggestions, no action needed
-                } else if !searcher.has_suggestions() {
-                    let suggestions = if query.is_empty() {
-                        devtools::DevTools::to_packages(devtools::DevTools::popular())
-                    } else {
-                        devtools::DevTools::to_packages(devtools::DevTools::search(&query))
-                    };
+            // Show suggestions if query is empty
+            if query.is_empty() {
+                if !searcher.has_suggestions() {
+                    let suggestions = devtools::DevTools::to_packages(devtools::DevTools::popular());
                     searcher.set_suggestions(suggestions);
                 }
-            } else {
-                // Clear suggestions when user types more
-                searcher.clear_suggestions();
+            } else if query.len() == 1 {
+                // For single character, show devtools suggestions
+                if !searcher.has_results() {
+                    let suggestions = devtools::DevTools::to_packages(devtools::DevTools::search(&query));
+                    searcher.set_suggestions(suggestions);
+                }
             }
 
-            // Check if we need to search
+            // Check if we need to search (for queries >= 2 chars)
             if searcher.needs_search() && last_search_time.elapsed() >= search_delay {
                 searcher.set_loading(true);
                 searcher.mark_searched();
 
-                // Do the search
+                // Do the search - this will return top 10 results for auto-suggestions
                 let results = pm.search(&query).await?;
-                searcher.set_results(results);
+                // Limit to top 10 for auto-suggestions
+                let limited_results: Vec<Package> = results.into_iter().take(10).collect();
+                searcher.set_results(limited_results);
                 last_search_time = std::time::Instant::now();
             }
 
@@ -810,11 +912,19 @@ async fn install_packages_multi(package_names: Vec<String>) -> Result<()> {
         "Detecting package types and searching across all available package managers..."
     ));
 
-    let multi = MultiBackend::new()?;
+    let multi = MultiBackend::new()
+        .context("Failed to initialize multi-backend. Make sure at least one package manager is available.")?;
+    
+    let backend_count = multi.get_backends().len();
+    let backend_names: Vec<String> = multi.get_backends()
+        .iter()
+        .map(|(id, _)| id.clone())
+        .collect();
     
     print_info(&format!(
-        "Found {} available package managers",
-        multi.get_backends().len()
+        "Searching in {} package managers: {}",
+        backend_count,
+        backend_names.join(", ")
     ));
 
     let results = multi.install_auto(package_names).await?;
@@ -883,6 +993,133 @@ async fn handle_go_command(cmd: GoCommands, pm: &Arc<dyn PackageManager>) -> Res
         }
         GoCommands::List => {
             list_installed_packages(pm)?;
+        }
+    }
+    Ok(())
+}
+
+/// Handle docker subcommands
+async fn handle_docker_command(cmd: DockerCommands, pm: &Arc<dyn PackageManager>) -> Result<()> {
+    match cmd {
+        DockerCommands::Install { images } => {
+            install_packages(pm, images).await?;
+        }
+        DockerCommands::Search { query } => {
+            let _packages = search_packages(pm, &query, false).await?;
+        }
+        DockerCommands::List => {
+            list_installed_packages(pm)?;
+        }
+        DockerCommands::Run { image, name, args } => {
+            // Get the dockerhub backend to access run_container method
+            use backend::dockerhub::DockerhubBackend;
+            if let Ok(docker_backend) = DockerhubBackend::new() {
+                print_info(&format!("Running container from image: {}...", image.cyan()));
+                let success = docker_backend.run_container(&image, name.as_deref(), &args).await?;
+                if success {
+                    print_success(&format!("Container started successfully from {}", image));
+                } else {
+                    print_error("Failed to start container");
+                }
+            } else {
+                print_error("Failed to initialize Docker backend");
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Handle zsh subcommands
+async fn handle_zsh_command(cmd: ZshCommands, pm: &Arc<dyn PackageManager>) -> Result<()> {
+    match cmd {
+        ZshCommands::Plugins => {
+            // List popular zsh plugins
+            let popular_plugins = vec![
+                "ohmyzsh/ohmyzsh",
+                "zsh-users/zsh-autosuggestions",
+                "zsh-users/zsh-syntax-highlighting",
+                "zsh-users/zsh-completions",
+                "romkatv/powerlevel10k",
+                "agkozak/zsh-z",
+                "Aloxaf/fzf-tab",
+                "zdharma-continuum/fast-syntax-highlighting",
+                "marlonrichert/zsh-autocomplete",
+                "zsh-users/zsh-history-substring-search",
+            ];
+            
+            println!();
+            println!("{}", "Popular Zsh Plugins".cyan().bold());
+            println!("{}", "=".repeat(50).bright_black());
+            println!();
+            
+            // Create zsh backend to access verification methods
+            let zsh_backend = backend::zsh::ZshBackend::new()?;
+            
+            // Show loading spinner
+            use indicatif::{ProgressBar, ProgressStyle};
+            let pb = ProgressBar::new(popular_plugins.len() as u64);
+            pb.set_style(
+                ProgressStyle::default_spinner()
+                    .template("{spinner:.green} Verifying plugins... ({pos}/{len})")
+                    .unwrap()
+            );
+            
+            let mut valid_plugins = Vec::new();
+            
+            // Verify each plugin exists and get its info
+            use std::io::Write;
+            for plugin in popular_plugins {
+                print!("  {} Checking {}...\r", "⏳".yellow(), plugin);
+                std::io::stdout().flush().ok();
+                
+                if let Ok(Some(pkg)) = zsh_backend.get_repo_info(plugin).await {
+                    valid_plugins.push(pkg);
+                }
+                
+                pb.inc(1);
+            }
+            
+            pb.finish_and_clear();
+            println!(); // Clear the last status line
+            
+            if valid_plugins.is_empty() {
+                print_warning("No valid plugins found");
+                return Ok(());
+            }
+            
+            // Sort by popularity (stars)
+            valid_plugins.sort_by(|a, b| b.popularity.partial_cmp(&a.popularity).unwrap_or(std::cmp::Ordering::Equal));
+            
+            // Display valid plugins with installation status
+            for pkg in &valid_plugins {
+                let status = if pkg.installed {
+                    " [installed]".green()
+                } else {
+                    "".normal()
+                };
+                
+                let desc = pkg.description.as_ref()
+                    .map(|d| format!(" - {}", d))
+                    .unwrap_or_default();
+                
+                println!(
+                    "  {} {}{}{}",
+                    "•".green(),
+                    pkg.name.cyan().bold(),
+                    status,
+                    desc.bright_black()
+                );
+            }
+            
+            println!();
+            println!("{}", "Install with: zap zsh install <plugin-name>".bright_black());
+            println!();
+        }
+        ZshCommands::Install { plugins } => {
+            install_packages(pm, plugins).await?;
+        }
+        ZshCommands::Search { query } => {
+            let _packages = search_packages(pm, &query, false).await?;
         }
     }
     Ok(())
