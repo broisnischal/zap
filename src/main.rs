@@ -53,7 +53,8 @@ enum BackendChoice {
 #[derive(Parser)]
 #[command(name = "zap")]
 #[command(author = "nees")]
-#[command(version = "0.1.0")]
+// Use the crate version from Cargo.toml so binaries and releases stay in sync
+#[command(version = env!("CARGO_PKG_VERSION"))]
 #[command(about = "Fast cross-platform package manager", long_about = None)]
 struct Cli {
     #[command(subcommand)]
