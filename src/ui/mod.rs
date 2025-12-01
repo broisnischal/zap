@@ -305,6 +305,7 @@ impl FuzzyFinder {
 pub struct LiveSearcher {
     query: String,
     results: Vec<Package>,
+    suggestions: Vec<Package>,
     cursor: usize,
     selected: Vec<usize>,
     list_state: ListState,
@@ -318,6 +319,7 @@ impl LiveSearcher {
         Self {
             query: String::new(),
             results: Vec::new(),
+            suggestions: Vec::new(),
             cursor: 0,
             selected: Vec::new(),
             list_state: ListState::default(),
@@ -329,6 +331,7 @@ impl LiveSearcher {
 
     pub fn set_results(&mut self, results: Vec<Package>) {
         self.results = results;
+        self.suggestions.clear(); // Clear suggestions when real results arrive
         self.cursor = 0;
         self.selected.clear();
         self.list_state.select(if self.results.is_empty() {
@@ -337,6 +340,32 @@ impl LiveSearcher {
             Some(0)
         });
         self.loading = false;
+    }
+
+    pub fn set_suggestions(&mut self, suggestions: Vec<Package>) {
+        self.suggestions = suggestions;
+        self.cursor = 0;
+        self.selected.clear();
+        self.list_state.select(if self.suggestions.is_empty() {
+            None
+        } else {
+            Some(0)
+        });
+    }
+
+    pub fn clear_suggestions(&mut self) {
+        self.suggestions.clear();
+        if self.results.is_empty() {
+            self.list_state.select(None);
+        }
+    }
+
+    pub fn has_suggestions(&self) -> bool {
+        !self.suggestions.is_empty()
+    }
+
+    pub fn has_results(&self) -> bool {
+        !self.results.is_empty()
     }
 
     pub fn set_loading(&mut self, loading: bool) {
@@ -360,7 +389,12 @@ impl LiveSearcher {
     }
 
     fn toggle_selection(&mut self) {
-        if self.cursor < self.results.len() {
+        let items = if !self.results.is_empty() {
+            self.results.len()
+        } else {
+            self.suggestions.len()
+        };
+        if self.cursor < items {
             if let Some(pos) = self.selected.iter().position(|&x| x == self.cursor) {
                 self.selected.remove(pos);
             } else {
@@ -370,28 +404,47 @@ impl LiveSearcher {
     }
 
     fn move_up(&mut self) {
-        if !self.results.is_empty() {
+        let items = if !self.results.is_empty() {
+            self.results.len()
+        } else {
+            self.suggestions.len()
+        };
+        if items > 0 {
             self.cursor = self.cursor.saturating_sub(1);
             self.list_state.select(Some(self.cursor));
         }
     }
 
     fn move_down(&mut self) {
-        if !self.results.is_empty() && self.cursor < self.results.len() - 1 {
+        let items = if !self.results.is_empty() {
+            self.results.len()
+        } else {
+            self.suggestions.len()
+        };
+        if items > 0 && self.cursor < items - 1 {
             self.cursor += 1;
             self.list_state.select(Some(self.cursor));
         }
     }
 
     pub fn get_selected_packages(&self) -> Vec<Package> {
+        let packages = if !self.results.is_empty() {
+            &self.results
+        } else {
+            &self.suggestions
+        };
         self.selected
             .iter()
-            .filter_map(|&idx| self.results.get(idx).cloned())
+            .filter_map(|&idx| packages.get(idx).cloned())
             .collect()
     }
 
     pub fn get_current_package(&self) -> Option<Package> {
-        self.results.get(self.cursor).cloned()
+        if !self.results.is_empty() {
+            self.results.get(self.cursor).cloned()
+        } else {
+            self.suggestions.get(self.cursor).cloned()
+        }
     }
 
     pub fn handle_key(&mut self, key: event::KeyEvent) -> Option<SearchAction> {
@@ -410,7 +463,9 @@ impl LiveSearcher {
                     None
                 }
             }
-            KeyCode::Tab | KeyCode::Char(' ') if !self.results.is_empty() => {
+            KeyCode::Tab | KeyCode::Char(' ')
+                if !self.results.is_empty() || !self.suggestions.is_empty() =>
+            {
                 self.toggle_selection();
                 self.move_down();
                 None
@@ -460,7 +515,11 @@ impl LiveSearcher {
         let loading_indicator = if self.loading { " ..." } else { "" };
         let search_text = format!(" > {}{}_", self.query, loading_indicator);
 
-        let title = format!(" zap ⚡ {} (min 2 chars) ", self.pm_name);
+        let title = if !self.suggestions.is_empty() && self.results.is_empty() {
+            format!(" zap ⚡ {} (suggestions) ", self.pm_name)
+        } else {
+            format!(" zap ⚡ {} (min 2 chars) ", self.pm_name)
+        };
         let search = Paragraph::new(search_text)
             .style(Style::default().fg(Color::White))
             .block(
@@ -471,14 +530,23 @@ impl LiveSearcher {
             );
         f.render_widget(search, chunks[0]);
 
-        // Package list
-        let items: Vec<ListItem> = if self.is_query_too_short() {
+        // Package list - show suggestions if no results, otherwise show results
+        let empty_vec = Vec::<Package>::new();
+        let display_packages = if !self.results.is_empty() {
+            &self.results
+        } else if !self.suggestions.is_empty() {
+            &self.suggestions
+        } else {
+            &empty_vec
+        };
+
+        let items: Vec<ListItem> = if self.is_query_too_short() && display_packages.is_empty() {
             vec![ListItem::new("  Type at least 2 characters to search...")
                 .style(Style::default().fg(Color::DarkGray))]
-        } else if self.results.is_empty() && !self.query.is_empty() && !self.loading {
+        } else if display_packages.is_empty() && !self.query.is_empty() && !self.loading {
             vec![ListItem::new("  No packages found").style(Style::default().fg(Color::DarkGray))]
         } else {
-            self.results
+            display_packages
                 .iter()
                 .enumerate()
                 .map(|(idx, pkg)| {
@@ -531,11 +599,27 @@ impl LiveSearcher {
                 .collect()
         };
 
-        let list_title = format!(
-            " Results: {} | Selected: {} ",
-            self.results.len(),
-            self.selected.len()
-        );
+        let display_count = if !self.results.is_empty() {
+            self.results.len()
+        } else {
+            self.suggestions.len()
+        };
+
+        let list_title = if !self.results.is_empty() {
+            format!(
+                " Results: {} | Selected: {} ",
+                display_count,
+                self.selected.len()
+            )
+        } else if !self.suggestions.is_empty() {
+            format!(
+                " Suggestions: {} | Selected: {} ",
+                display_count,
+                self.selected.len()
+            )
+        } else {
+            format!(" Results: 0 | Selected: {} ", self.selected.len())
+        };
 
         let list = List::new(items).block(
             Block::default()

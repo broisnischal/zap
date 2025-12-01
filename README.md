@@ -137,11 +137,32 @@ zap -b aur
 ```
 
 In interactive mode:
-- Type to search (minimum 2 characters)
+- **Autocomplete suggestions**: Popular developer tools (tmux, vim, git, etc.) are shown when the search is empty
+- Type to search (minimum 2 characters for backend search)
 - `Space` - Select/deselect package
 - `Enter` - Install selected packages
 - `Up/Down` - Navigate
 - `Esc` - Quit
+
+### Developer Tools Autocomplete
+```bash
+# View all curated developer tools
+zap devtools
+
+# Interactive mode shows suggestions automatically
+zap
+# (Popular tools like tmux, vim, git, curl, etc. appear when search is empty)
+```
+
+The autocomplete feature includes popular developer tools organized by category:
+- **Editors**: vim, neovim, emacs, nano, code, sublime-text
+- **Terminals**: tmux, screen, zsh, fish, alacritty, kitty
+- **Version Control**: git, git-lfs, mercurial, subversion
+- **Build Tools**: make, cmake, gcc, clang, rust, go, nodejs, python3
+- **Utilities**: htop, tree, jq, fzf, ripgrep, fd, bat, exa, starship, direnv
+- **Databases**: postgresql, mysql, sqlite, redis, mongodb
+- **Containers**: docker, podman, docker-compose, kubectl
+- **Networking**: curl, wget, httpie, netcat, nmap, tcpdump
 
 ### Search Packages
 ```bash
@@ -229,6 +250,7 @@ Use `zap search -I <term>` with `-b npm` or `-b pip` for fuzzy selection inside 
 | `managers` | `pm` | List available package managers |
 | `list` | `ls` | Show packages installed via current backend |
 | `self-update` | `selfupdate` | Check for zap CLI updates |
+| `devtools` | - | Show curated developer tools suggestions |
 
 ## Global Options
 

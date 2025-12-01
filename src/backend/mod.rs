@@ -8,6 +8,7 @@ mod detect;
 pub mod dnf;
 pub mod flatpak;
 pub mod go;
+pub mod multi;
 pub mod npm;
 pub mod pacman;
 pub mod pip;

@@ -1,4 +1,5 @@
 mod backend;
+mod devtools;
 mod ui;
 mod update;
 
@@ -15,6 +16,8 @@ use std::io::stdout;
 use std::sync::Arc;
 use std::time::Duration;
 
+use backend::sudo;
+use backend::multi::MultiBackend;
 use backend::{detect_available_package_managers, detect_system, Package, PackageManager, System};
 use ui::*;
 
@@ -116,6 +119,93 @@ enum Commands {
     /// Check for zap CLI updates
     #[command(alias = "selfupdate")]
     SelfUpdate,
+
+    /// Show curated developer tools suggestions
+    DevTools,
+
+    /// npm package manager commands
+    #[command(subcommand)]
+    Npm(NpmCommands),
+
+    /// pip package manager commands
+    #[command(subcommand)]
+    Pip(PipCommands),
+
+    /// cargo package manager commands
+    #[command(subcommand)]
+    Cargo(CargoCommands),
+
+    /// go package manager commands
+    #[command(subcommand)]
+    Go(GoCommands),
+}
+
+#[derive(Subcommand)]
+enum NpmCommands {
+    /// Install npm packages
+    Install {
+        /// Package names to install
+        #[arg(required = true)]
+        packages: Vec<String>,
+    },
+    /// Search npm packages
+    Search {
+        /// Search query
+        query: String,
+    },
+    /// List installed npm packages
+    List,
+}
+
+#[derive(Subcommand)]
+enum PipCommands {
+    /// Install pip packages
+    Install {
+        /// Package names to install
+        #[arg(required = true)]
+        packages: Vec<String>,
+    },
+    /// Search pip packages
+    Search {
+        /// Search query
+        query: String,
+    },
+    /// List installed pip packages
+    List,
+}
+
+#[derive(Subcommand)]
+enum CargoCommands {
+    /// Install cargo packages
+    Install {
+        /// Package names to install
+        #[arg(required = true)]
+        packages: Vec<String>,
+    },
+    /// Search cargo packages
+    Search {
+        /// Search query
+        query: String,
+    },
+    /// List installed cargo packages
+    List,
+}
+
+#[derive(Subcommand)]
+enum GoCommands {
+    /// Install go packages
+    Install {
+        /// Package names to install
+        #[arg(required = true)]
+        packages: Vec<String>,
+    },
+    /// Search go packages
+    Search {
+        /// Search query
+        query: String,
+    },
+    /// List installed go packages
+    List,
 }
 
 #[tokio::main]
@@ -126,6 +216,22 @@ async fn main() -> Result<()> {
     // Detect the system and create appropriate backend
     let system = detect_system();
     let pm: Arc<dyn PackageManager> = create_backend(&system, cli.backend)?;
+    
+    // Determine if we'll need sudo for this operation
+    // Install, Update, Interactive mode, and direct package installation require sudo
+    let needs_sudo_for_operation = matches!(
+        cli.command.as_ref(),
+        Some(Commands::Install { .. })
+            | Some(Commands::Update)
+            | Some(Commands::Interactive)
+            | Some(Commands::Search { interactive: true, .. })
+    ) || !cli.packages.is_empty();
+    
+    // Request sudo password early if needed (before any operations that require it)
+    // This ensures password is asked once at the start and reused throughout the session
+    if needs_sudo_for_operation && sudo::needs_sudo() {
+        sudo::ensure_password()?;
+    }
 
     print_info(&format!(
         "Detected: {} (using {})",
@@ -159,7 +265,12 @@ async fn main() -> Result<()> {
         }
 
         Some(Commands::Install { packages }) => {
-            install_packages(&pm, packages).await?;
+            // Use multi-backend for auto-detection when backend is Auto
+            if matches!(cli.backend, BackendChoice::Auto) {
+                install_packages_multi(packages).await?;
+            } else {
+                install_packages(&pm, packages).await?;
+            }
         }
 
         Some(Commands::Info { package }) => {
@@ -190,10 +301,39 @@ async fn main() -> Result<()> {
             run_self_update().await?;
         }
 
+        Some(Commands::DevTools) => {
+            show_devtools();
+        }
+
+        Some(Commands::Npm(cmd)) => {
+            let npm_pm: Arc<dyn PackageManager> = Arc::new(backend::npm::NpmBackend::new()?);
+            handle_npm_command(cmd, &npm_pm).await?;
+        }
+
+        Some(Commands::Pip(cmd)) => {
+            let pip_pm: Arc<dyn PackageManager> = Arc::new(backend::pip::PipBackend::new()?);
+            handle_pip_command(cmd, &pip_pm).await?;
+        }
+
+        Some(Commands::Cargo(cmd)) => {
+            let cargo_pm: Arc<dyn PackageManager> = Arc::new(backend::cargo::CargoBackend::new()?);
+            handle_cargo_command(cmd, &cargo_pm).await?;
+        }
+
+        Some(Commands::Go(cmd)) => {
+            let go_pm: Arc<dyn PackageManager> = Arc::new(backend::go::GoBackend::new()?);
+            handle_go_command(cmd, &go_pm).await?;
+        }
+
         None => {
             // If packages provided directly, install them
             if !cli.packages.is_empty() {
-                install_packages(&pm, cli.packages).await?;
+                // Use multi-backend for auto-detection
+                if matches!(cli.backend, BackendChoice::Auto) {
+                    install_packages_multi(cli.packages).await?;
+                } else {
+                    install_packages(&pm, cli.packages).await?;
+                }
             } else {
                 // Default to interactive mode
                 interactive_mode(&pm).await?;
@@ -407,6 +547,57 @@ async fn run_self_update() -> Result<()> {
     Ok(())
 }
 
+fn show_devtools() {
+    println!();
+    println!("{}", "Popular Developer Tools".cyan().bold());
+    println!("{}", "=".repeat(60).bright_black());
+    println!();
+
+    let tools = devtools::DevTools::all_tools();
+    let mut by_category: std::collections::HashMap<&str, Vec<_>> = std::collections::HashMap::new();
+
+    for tool in &tools {
+        by_category
+            .entry(tool.category)
+            .or_insert_with(Vec::new)
+            .push(tool);
+    }
+
+    let categories = [
+        "Editor",
+        "Terminal",
+        "Version Control",
+        "Build Tools",
+        "Utilities",
+        "Database",
+        "Container",
+        "Networking",
+    ];
+
+    for category in &categories {
+        if let Some(tools) = by_category.get(category) {
+            println!("{}", format!("{}:", category).yellow().bold());
+            for tool in tools {
+                println!(
+                    "  {} {} {}",
+                    "•".green(),
+                    tool.name.cyan().bold(),
+                    tool.description.bright_black()
+                );
+            }
+            println!();
+        }
+    }
+
+    println!();
+    println!(
+        "{}",
+        "Tip: Type 'zap' or 'zap -b <backend>' to search interactively with autocomplete suggestions!"
+            .bright_black()
+    );
+    println!();
+}
+
 async fn search_packages(
     pm: &Arc<dyn PackageManager>,
     query: &str,
@@ -506,13 +697,35 @@ async fn interactive_mode(pm: &Arc<dyn PackageManager>) -> Result<()> {
     let mut last_search_time = std::time::Instant::now();
     let search_delay = Duration::from_millis(300);
 
+    // Show popular dev tools when starting
+    let suggestions = devtools::DevTools::to_packages(devtools::DevTools::popular());
+    searcher.set_suggestions(suggestions);
+
     let result: Result<Option<Vec<Package>>> = async {
         loop {
             terminal.draw(|f| searcher.render(f))?;
 
+            let query = searcher.get_query().to_string();
+
+            // Show suggestions if query is empty or very short
+            if query.is_empty() || query.len() == 1 {
+                if searcher.has_suggestions() && !searcher.has_results() {
+                    // Already showing suggestions, no action needed
+                } else if !searcher.has_suggestions() {
+                    let suggestions = if query.is_empty() {
+                        devtools::DevTools::to_packages(devtools::DevTools::popular())
+                    } else {
+                        devtools::DevTools::to_packages(devtools::DevTools::search(&query))
+                    };
+                    searcher.set_suggestions(suggestions);
+                }
+            } else {
+                // Clear suggestions when user types more
+                searcher.clear_suggestions();
+            }
+
             // Check if we need to search
             if searcher.needs_search() && last_search_time.elapsed() >= search_delay {
-                let query = searcher.get_query().to_string();
                 searcher.set_loading(true);
                 searcher.mark_searched();
 
@@ -583,5 +796,94 @@ async fn update_packages(pm: &Arc<dyn PackageManager>) -> Result<()> {
     let results = pm.update(&updates).await?;
     print_install_summary(&results);
 
+    Ok(())
+}
+
+/// Install packages using multi-backend auto-detection
+async fn install_packages_multi(package_names: Vec<String>) -> Result<()> {
+    if package_names.is_empty() {
+        print_warning("No packages specified");
+        return Ok(());
+    }
+
+    print_info(&format!(
+        "Detecting package types and searching across all available package managers..."
+    ));
+
+    let multi = MultiBackend::new()?;
+    
+    print_info(&format!(
+        "Found {} available package managers",
+        multi.get_backends().len()
+    ));
+
+    let results = multi.install_auto(package_names).await?;
+
+    print_install_summary(&results);
+
+    Ok(())
+}
+
+/// Handle npm subcommands
+async fn handle_npm_command(cmd: NpmCommands, pm: &Arc<dyn PackageManager>) -> Result<()> {
+    match cmd {
+        NpmCommands::Install { packages } => {
+            install_packages(pm, packages).await?;
+        }
+        NpmCommands::Search { query } => {
+            let _packages = search_packages(pm, &query, false).await?;
+        }
+        NpmCommands::List => {
+            list_installed_packages(pm)?;
+        }
+    }
+    Ok(())
+}
+
+/// Handle pip subcommands
+async fn handle_pip_command(cmd: PipCommands, pm: &Arc<dyn PackageManager>) -> Result<()> {
+    match cmd {
+        PipCommands::Install { packages } => {
+            install_packages(pm, packages).await?;
+        }
+        PipCommands::Search { query } => {
+            let _packages = search_packages(pm, &query, false).await?;
+        }
+        PipCommands::List => {
+            list_installed_packages(pm)?;
+        }
+    }
+    Ok(())
+}
+
+/// Handle cargo subcommands
+async fn handle_cargo_command(cmd: CargoCommands, pm: &Arc<dyn PackageManager>) -> Result<()> {
+    match cmd {
+        CargoCommands::Install { packages } => {
+            install_packages(pm, packages).await?;
+        }
+        CargoCommands::Search { query } => {
+            let _packages = search_packages(pm, &query, false).await?;
+        }
+        CargoCommands::List => {
+            list_installed_packages(pm)?;
+        }
+    }
+    Ok(())
+}
+
+/// Handle go subcommands
+async fn handle_go_command(cmd: GoCommands, pm: &Arc<dyn PackageManager>) -> Result<()> {
+    match cmd {
+        GoCommands::Install { packages } => {
+            install_packages(pm, packages).await?;
+        }
+        GoCommands::Search { query } => {
+            let _packages = search_packages(pm, &query, false).await?;
+        }
+        GoCommands::List => {
+            list_installed_packages(pm)?;
+        }
+    }
     Ok(())
 }
